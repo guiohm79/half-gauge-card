@@ -48,6 +48,8 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable_shadow` | boolean | false | Colored shadow around the card |
+| `background_shadow` | boolean | false | Apply severity color to the card background gradient. The gradient colors are replaced with the severity color at varying opacities |
+| `background_shadow_intensity` | number | 0.5 | Intensity of the background shadow (0 to 1). 0 = very subtle, 1 = very strong |
 | `center_shadow` | boolean | false | Colored shadow in the center |
 | `center_shadow_blur` | number | 30 | Center shadow blur |
 | `center_shadow_spread` | number | 15 | Center shadow spread |

@@ -34,6 +34,8 @@ class HalfGaugeCard extends HTMLElement {
       value_offset_y: 0,       // Vertical offset for value display (pixels, positive = down)
       transparent_card: false,
       transparent_gauge: false,
+      background_shadow: false, // Apply severity color to card background gradient
+      background_shadow_intensity: 0.5, // Intensity of the background shadow (0-1)
       ...config
     };
 
@@ -224,6 +226,75 @@ class HalfGaugeCard extends HTMLElement {
     });
   }
 
+  applyColorToGradient(cssGradient, severityColor, intensity = 0.5) {
+    // Parse the gradient and replace colors with the severity color at different opacities
+    // intensity: 0 = very subtle, 1 = very strong
+    
+    // Use exponential scaling for better control at low intensities
+    const baseOpacity = intensity * 0.05;  // 0 to 0.05
+    const rangeOpacity = intensity * 0.25; // 0 to 0.25
+    
+    // For radial-gradient
+    if (cssGradient.includes('radial-gradient')) {
+      // Extract the shape and position part (e.g., "circle", "circle at center", etc.)
+      const match = cssGradient.match(/radial-gradient\(([^,]+),\s*(.+)/);
+      if (match) {
+        const shape = match[1].trim();
+        const stops = match[2].replace(')', '').split(',').map(s => s.trim());
+        
+        // Replace each stop color with severity color at varying opacity
+        const newStops = stops.map((stop, index) => {
+          const stopMatch = stop.match(/([^\s]+)\s+(.+)/);
+          const offset = stopMatch ? stopMatch[2] : `${(index / (stops.length - 1)) * 100}%`;
+          // Vary opacity: outer stops more transparent, inner more opaque
+          const opacity = baseOpacity + (rangeOpacity * (1 - index / (stops.length - 1)));
+          return `rgba(${this.hexToRgb(severityColor)}, ${opacity.toFixed(2)}) ${offset}`;
+        });
+        
+        return `radial-gradient(${shape}, ${newStops.join(', ')})`;
+      }
+    }
+    
+    // For linear-gradient
+    if (cssGradient.includes('linear-gradient')) {
+      const match = cssGradient.match(/linear-gradient\(([^,]+),\s*(.+)/);
+      if (match) {
+        const direction = match[1].trim();
+        const stops = match[2].replace(')', '').split(',').map(s => s.trim());
+        
+        // Replace each stop color with severity color at varying opacity
+        const newStops = stops.map((stop, index) => {
+          const stopMatch = stop.match(/([^\s]+)\s+(.+)/);
+          const offset = stopMatch ? stopMatch[2] : `${(index / (stops.length - 1)) * 100}%`;
+          // Vary opacity based on position
+          const opacity = baseOpacity + (rangeOpacity * (index / (stops.length - 1)));
+          return `rgba(${this.hexToRgb(severityColor)}, ${opacity.toFixed(2)}) ${offset}`;
+        });
+        
+        return `linear-gradient(${direction}, ${newStops.join(', ')})`;
+      }
+    }
+    
+    // Fallback: return original
+    return cssGradient;
+  }
+
+  hexToRgb(hex) {
+    // Remove # if present
+    hex = hex.replace('#', '');
+    
+    // Handle 3-digit hex
+    if (hex.length === 3) {
+      hex = hex.split('').map(c => c + c).join('');
+    }
+    
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    
+    return `${r}, ${g}, ${b}`;
+  }
+
   parseGradientToSvg(cssGradient, prefix = 'gradient') {
     const id = prefix + 'Grad' + Math.random().toString(36).substr(2, 9);
     
@@ -321,6 +392,14 @@ class HalfGaugeCard extends HTMLElement {
     // Update card shadow
     if (config.enable_shadow) {
       this.shadowRoot.querySelector('.card').style.boxShadow = `0 0 25px ${color}`;
+    }
+
+    // Update background shadow (severity color applied to card background gradient)
+    if (config.background_shadow && config.card_background && config.card_background.includes('gradient')) {
+      const card = this.shadowRoot.querySelector('.card');
+      const intensity = config.background_shadow_intensity !== undefined ? config.background_shadow_intensity : 0.5;
+      const coloredGradient = this.applyColorToGradient(config.card_background, color, intensity);
+      card.style.background = coloredGradient;
     }
 
     // Update center shadow
