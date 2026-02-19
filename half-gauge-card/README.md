@@ -37,8 +37,8 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 | `leds_count` | number | 60 | Number of LEDs |
 | `led_size` | number | 10 | LED size (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
-| `card_background` | string | #222 | Card background color |
-| `gauge_background` | string | radial-gradient(...) | Gauge background |
+| `card_background` | string | #222 | Card background color or gradient. Supports: hex colors (`#222`, `#ff0000`), `transparent`, CSS gradients like `linear-gradient(135deg, #1a1a2e, #16213e)` or `radial-gradient(circle, #333, #111)` |
+| `gauge_background` | string | #333 | Gauge background color or gradient. Supports: hex colors (`#fff`, `#ff0000`), `transparent`, CSS gradients like `linear-gradient(to right, #333, #666)` or `radial-gradient(circle, #444, #222)` |
 | `text_color` | string | #fff | Value color |
 | `unit_color` | string | #ddd | Unit color |
 | `title_color` | string | #fff | Title color |
@@ -65,6 +65,8 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `value_position` | string | 'below' | 'below' = under the gauge, 'inside' = inside the gauge |
+| `value_font_size` | number | null | Custom font size for the value (pixels). Default: 36 for 'below', 32 for 'inside' |
+| `value_offset_y` | number | 0 | Vertical offset for the value display (pixels). Positive values move down, negative move up |
 
 ### Animation
 

@@ -30,6 +30,8 @@ class HalfGaugeCard extends HTMLElement {
       center_shadow_spread: 20,
       center_shadow_size: 70,  // Size of center shadow as percentage of gauge radius
       value_position: 'below', // 'below' or 'inside'
+      value_font_size: null,   // Custom font size for value (null = default based on position)
+      value_offset_y: 0,       // Vertical offset for value display (pixels, positive = down)
       transparent_card: false,
       transparent_gauge: false,
       ...config
@@ -52,20 +54,31 @@ class HalfGaugeCard extends HTMLElement {
     const centerShadowSize = config.center_shadow_size || 70; // percentage
     const centerRadius = (halfSize - ledSize - 5) * (centerShadowSize / 100);
     
+    // Card background - CSS supports colors and gradients natively
     const cardBg = config.transparent_card ? 'transparent' : (config.card_background || '#222');
-    const gaugeBg = config.transparent_gauge ? 'transparent' : (config.gauge_background || 'radial-gradient(circle at center, #444, #222)');
+    
+    // Parse gauge background - support both solid colors and gradients (SVG needs conversion)
+    let gaugeBg = config.transparent_gauge ? 'transparent' : (config.gauge_background || '#333');
+    let gaugeBgSvg = '';
+    let gaugeStrokeRef = '';
+    
+    if (gaugeBg.includes('gradient')) {
+      const gradientDef = this.parseGradientToSvg(gaugeBg, 'gauge');
+      gaugeBgSvg = gradientDef.svg;
+      gaugeStrokeRef = `url(#${gradientDef.id})`;
+    } else {
+      gaugeStrokeRef = gaugeBg;
+    }
     
     const styles = `
       :host {
-        --card-bg: ${cardBg};
-        --gauge-bg: ${gaugeBg};
         --text-color: ${config.text_color || '#fff'};
         --unit-color: ${config.unit_color || '#ddd'};
         --title-color: ${config.title_color || '#fff'};
       }
       
       .card {
-        background: var(--card-bg);
+        background: ${cardBg};
         border-radius: 16px;
         padding: 20px 20px 15px 20px;
         display: flex;
@@ -91,7 +104,7 @@ class HalfGaugeCard extends HTMLElement {
       
       .value-inside {
         position: absolute;
-        bottom: 10px;
+        bottom: ${10 + (config.value_offset_y || 0)}px;
         left: 50%;
         transform: translateX(-50%);
         display: flex;
@@ -102,14 +115,14 @@ class HalfGaugeCard extends HTMLElement {
       }
       
       .value-inside .value {
-        font-size: 32px;
+        font-size: ${config.value_font_size || 32}px;
         font-weight: bold;
         line-height: 1;
         text-shadow: 0 2px 4px rgba(0,0,0,0.5);
       }
       
       .value-inside .unit {
-        font-size: 12px;
+        font-size: ${(config.value_font_size || 32) * 0.375}px;
         color: var(--unit-color);
         text-shadow: 0 1px 2px rgba(0,0,0,0.5);
       }
@@ -118,18 +131,18 @@ class HalfGaugeCard extends HTMLElement {
         display: flex;
         flex-direction: column;
         align-items: center;
-        margin-top: 5px;
+        margin-top: ${5 + (config.value_offset_y || 0)}px;
         color: var(--text-color);
       }
       
       .value-display .value {
-        font-size: 36px;
+        font-size: ${config.value_font_size || 36}px;
         font-weight: bold;
         line-height: 1.1;
       }
       
       .value-display .unit {
-        font-size: 14px;
+        font-size: ${(config.value_font_size || 36) * 0.39}px;
         color: var(--unit-color);
         margin-top: 2px;
       }
@@ -174,10 +187,7 @@ class HalfGaugeCard extends HTMLElement {
         <div class="gauge-container">
           <svg class="gauge-svg" viewBox="0 0 ${gaugeSize} ${halfSize}">
             <defs>
-              <radialGradient id="gaugeBg" cx="50%" cy="100%" r="100%">
-                <stop offset="0%" stop-color="#333" />
-                <stop offset="100%" stop-color="#222" />
-              </radialGradient>
+              ${gaugeBgSvg}
               <filter id="centerGlow" x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="${config.center_shadow_blur / 3}" result="blur"/>
                 <feComponentTransfer>
@@ -188,7 +198,7 @@ class HalfGaugeCard extends HTMLElement {
             <!-- Background arc -->
             <path d="M ${ledSize + 5},${halfSize} A ${radius},${radius} 0 0,1 ${gaugeSize - ledSize - 5},${halfSize}" 
                   fill="none" 
-                  stroke="url(#gaugeBg)" 
+                  stroke="${gaugeStrokeRef}" 
                   stroke-width="${ledSize + 4}" 
                   stroke-linecap="round"/>
             <!-- Center shadow (filled half-circle) -->
@@ -212,6 +222,76 @@ class HalfGaugeCard extends HTMLElement {
       event.detail = { entityId: config.entity };
       this.dispatchEvent(event);
     });
+  }
+
+  parseGradientToSvg(cssGradient, prefix = 'gradient') {
+    const id = prefix + 'Grad' + Math.random().toString(36).substr(2, 9);
+    
+    // Parse linear-gradient
+    const linearMatch = cssGradient.match(/linear-gradient\(([^)]+)\)/);
+    if (linearMatch) {
+      const parts = linearMatch[1].split(',').map(p => p.trim());
+      const direction = parts[0];
+      const stops = parts.slice(1);
+      
+      // Map CSS direction to SVG coordinates
+      let x1 = '0%', y1 = '0%', x2 = '100%', y2 = '0%';
+      if (direction.includes('to right')) { x1 = '0%'; y1 = '0%'; x2 = '100%'; y2 = '0%'; }
+      else if (direction.includes('to left')) { x1 = '100%'; y1 = '0%'; x2 = '0%'; y2 = '0%'; }
+      else if (direction.includes('to bottom')) { x1 = '0%'; y1 = '0%'; x2 = '0%'; y2 = '100%'; }
+      else if (direction.includes('to top')) { x1 = '0%'; y1 = '100%'; x2 = '0%'; y2 = '0%'; }
+      else if (direction.includes('deg')) {
+        const angle = parseInt(direction);
+        const rad = (angle - 90) * Math.PI / 180;
+        x1 = '50%'; y1 = '50%';
+        x2 = `${50 + 50 * Math.cos(rad)}%`;
+        y2 = `${50 + 50 * Math.sin(rad)}%`;
+      }
+      
+      const stopElements = stops.map((stop, index) => {
+        const stopMatch = stop.match(/([^\s]+)\s+(.+)/);
+        if (stopMatch) {
+          const color = stopMatch[1];
+          const offset = stopMatch[2];
+          return `<stop offset="${offset}" stop-color="${color}" />`;
+        }
+        // If no offset specified, distribute evenly
+        const offset = (index / (stops.length - 1)) * 100;
+        return `<stop offset="${offset}%" stop-color="${stop}" />`;
+      }).join('\n');
+      
+      return {
+        id,
+        svg: `<linearGradient id="${id}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stopElements}</linearGradient>`
+      };
+    }
+    
+    // Parse radial-gradient
+    const radialMatch = cssGradient.match(/radial-gradient\(([^)]+)\)/);
+    if (radialMatch) {
+      const parts = radialMatch[1].split(',').map(p => p.trim());
+      const shape = parts[0].includes('circle') ? 'circle' : 'ellipse';
+      const stops = parts.slice(1);
+      
+      const stopElements = stops.map((stop, index) => {
+        const stopMatch = stop.match(/([^\s]+)\s+(.+)/);
+        if (stopMatch) {
+          const color = stopMatch[1];
+          const offset = stopMatch[2];
+          return `<stop offset="${offset}" stop-color="${color}" />`;
+        }
+        const offset = (index / (stops.length - 1)) * 100;
+        return `<stop offset="${offset}%" stop-color="${stop}" />`;
+      }).join('\n');
+      
+      return {
+        id,
+        svg: `<radialGradient id="${id}" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">${stopElements}</radialGradient>`
+      };
+    }
+    
+    // Fallback - return as-is
+    return { id, svg: '' };
   }
 
   getLedColor(value, min, max) {
