@@ -248,6 +248,39 @@ card_background: "radial-gradient(circle, #333, #111)"
 background_shadow: true
 ```
 
+### Example with center shadow and border
+
+![Complete Example](image7.png)
+
+```yaml
+type: custom:half-gauge-card
+entity: sensor.humidite
+gauge_size: 210
+leds_count: 80
+name: Humidité
+unit: "%"
+min: 0
+max: 100
+severity:
+  - color: "#4caf50"
+    value: 10
+  - color: "#ffeb3b"
+    value: 70
+  - color: "#f44336"
+    value: 90
+value_position: inside
+value_offset_y: -10
+gauge_background: "linear-gradient(45deg, #333 0%, #666 50%, #999 100%)"
+card_background: "radial-gradient(circle, #333, #111)"
+enable_shadow: true
+background_shadow: true
+background_shadow_intensity: 0.5
+center_shadow: true
+center_shadow_blur: 50
+center_shadow_spread: 10
+center_shadow_size: 80
+```
+
 ## Screenshots Gallery
 
 | Basic | With Shadow | Custom Position |
