@@ -1,3 +1,17 @@
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
+[![GitHub Release](https://img.shields.io/github/release/guiohm79/half-gauge-card.svg)](https://github.com/guiohm79/half-gauge-card/releases)
+[![License](https://img.shields.io/github/license/guiohm79/half-gauge-card.svg)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/guiohm79)
+![downloads-total][github-downloads]
+![stars][github-stars]
+![downloads-latest][github-latest-downloads]
+
+[github-downloads]: https://img.shields.io/github/downloads/guiohm79/half-gauge-card/total?style=flat
+[github-latest-downloads]: https://img.shields.io/github/downloads/guiohm79/half-gauge-card/latest/total?style=flat
+[github-stars]: https://img.shields.io/github/stars/guiohm79/half-gauge-card?style=flat
+
+
+
 # Half Gauge Card
 
 A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
