@@ -36,6 +36,7 @@ class HalfGaugeCard extends HTMLElement {
       transparent_gauge: false,
       background_shadow: false, // Apply severity color to card background gradient
       background_shadow_intensity: 0.5, // Intensity of the background shadow (0-1)
+      use_ha_card: false, // NEW: Option for ha-card Wrapper
       ...config
     };
 
@@ -183,8 +184,12 @@ class HalfGaugeCard extends HTMLElement {
       </div>
     `;
 
+    const wrapStart = config.use_ha_card ? '<ha-card>' : '';
+    const wrapEnd = config.use_ha_card ? '</ha-card>' : '';
+
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
+      ${wrapStart}
       <div class="card" id="card">
         <div class="gauge-container">
           <svg class="gauge-svg" viewBox="0 0 ${gaugeSize} ${halfSize}">
@@ -216,6 +221,7 @@ class HalfGaugeCard extends HTMLElement {
         ${!isValueInside ? valueBelowHTML : ''}
         <div class="title">${config.name || ''}</div>
       </div>
+      ${wrapEnd}
     `;
 
     // Click handler for more info
@@ -1002,6 +1008,20 @@ class HalfGaugeCardEditor extends HTMLElement {
     hideLedsFormfield.appendChild(hideLedsSwitch);
     hideLedsRow.appendChild(hideLedsFormfield);
     transparencySection.appendChild(hideLedsRow);
+
+    // Use HA Card Wrapper
+    const useHaCardRow = createRow('Use <ha-card> Wrapper');
+    const useHaCardSwitch = document.createElement('ha-switch');
+    useHaCardSwitch.style.cssText = 'margin-left:auto;';
+    useHaCardSwitch.checked = config.use_ha_card || false;
+    useHaCardSwitch.addEventListener('change', (e) => {
+      this._updateConfig('use_ha_card', e.target.checked);
+    });
+    const useHaCardFormfield = document.createElement('ha-formfield');
+    useHaCardFormfield.style.cssText = 'flex:1;';
+    useHaCardFormfield.appendChild(useHaCardSwitch);
+    useHaCardRow.appendChild(useHaCardFormfield);
+    transparencySection.appendChild(useHaCardRow);
 
     container.appendChild(transparencySection);
 
