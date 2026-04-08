@@ -98,6 +98,7 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 |--------|------|---------|-------------|
 | `transparent_card` | boolean | false | Transparent card background |
 | `transparent_gauge` | boolean | false | Transparent gauge background |
+| `use_ha_card` | boolean | false | Wrap card in `<ha-card>` element |
 
 ### Value Position
 
