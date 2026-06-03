@@ -21,10 +21,13 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 ## Features
 
 - Half-circle gauge (180°) with customizable LEDs
+- **Full visual editor** — all options configurable via GUI, no YAML required
+- **Entity attribute support** — display any attribute value instead of the entity state
 - Smooth animations and transitions
 - Multiple shadow effects (card, center, background)
-- Customizable colors, gradients, and positioning
-- Severity-based color thresholds
+- Customizable colors with **color palette picker**
+- **Background gradient builder** — solid color, linear gradient, radial gradient, or custom CSS
+- Severity-based color thresholds with color picker
 - Value display inside or below the gauge
 
 ## Installation
@@ -53,6 +56,34 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
      - URL: `/local/half-gauge-card.js`
      - Resource Type: **JavaScript Module**
 
+## Visual Editor
+
+The card includes a full GUI editor accessible from the Lovelace card editor. All options can be configured without writing YAML.
+
+### Editor sections
+
+| Section | Contents |
+|---------|----------|
+| **Basic** | Entity picker, attribute selector, name, unit |
+| **Range & Decimals** | Min, max, decimal places |
+| **Appearance** | Gauge size, LED count, LED size, value position, font size, offset |
+| **Colors** | Color picker for value/unit/title colors; gradient builder for backgrounds |
+| **Shadows** | LED shadow, background shadow, center shadow and its parameters |
+| **Display** | Transparent card/gauge, hide inactive LEDs, ha-card wrapper |
+| **Animation** | Smooth transitions, animation duration |
+| **Color Thresholds** | Add/remove severity thresholds with color picker and value |
+
+### Gradient builder
+
+For **Card background** and **Gauge background**, the editor provides four modes:
+
+- **Solid** — color picker + hex input
+- **Linear** — angle slider (0–360°) + color stops (up to 5, each with picker + position %)
+- **Radial** — shape selector (circle / ellipse) + color stops
+- **Custom** — free CSS text input for advanced gradients
+
+A live preview bar updates in real time as you make changes.
+
 ## Configuration
 
 ### Basic Options
@@ -60,6 +91,7 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `entity` | string | **required** | Entity to display |
+| `attribute` | string | | Entity attribute to read instead of state (e.g. `battery_level`) |
 | `name` | string | | Name displayed under the gauge |
 | `unit` | string | | Unit to display (%, °C, etc.) |
 | `min` | number | 0 | Minimum value |
@@ -71,64 +103,80 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `gauge_size` | number | 200 | Gauge size (px) |
-| `leds_count` | number | 60 | Number of LEDs |
+| `leds_count` | number | 50 | Number of LEDs |
 | `led_size` | number | 10 | LED size (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
-| `card_background` | string | #222 | Card background color or gradient. Supports: hex colors, `transparent`, CSS gradients |
-| `gauge_background` | string | #333 | Gauge background color or gradient. Supports: hex colors, `transparent`, CSS gradients |
-| `text_color` | string | #fff | Value color |
-| `unit_color` | string | #ddd | Unit color |
-| `title_color` | string | #fff | Title color |
-
-### Shadows
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enable_shadow` | boolean | false | Colored shadow around the card |
-| `background_shadow` | boolean | false | Apply severity color to the card background gradient |
-| `background_shadow_intensity` | number | 0.5 | Intensity of the background shadow (0 to 1). 0 = invisible, 0.1 = very subtle, 0.5 = moderate, 1 = strong |
-| `center_shadow` | boolean | false | Colored shadow in the center |
-| `center_shadow_blur` | number | 30 | Center shadow blur |
-| `center_shadow_spread` | number | 15 | Center shadow spread |
-| `center_shadow_size` | number | 70 | Center shadow size (% of radius) |
-
-### Transparency
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `transparent_card` | boolean | false | Transparent card background |
-| `transparent_gauge` | boolean | false | Transparent gauge background |
-| `use_ha_card` | boolean | false | Wrap card in `<ha-card>` element |
+| `card_background` | string | `#222` | Card background — hex color, `transparent`, or CSS gradient |
+| `gauge_background` | string | `#333` | Gauge background — hex color, `transparent`, or CSS gradient |
+| `text_color` | string | `#fff` | Value color |
+| `unit_color` | string | `#ddd` | Unit color |
+| `title_color` | string | `#fff` | Title color |
 
 ### Value Position
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `value_position` | string | 'below' | 'below' = under the gauge, 'inside' = inside the gauge |
-| `value_font_size` | number | null | Custom font size for the value (pixels). Default: 36 for 'below', 32 for 'inside' |
-| `value_offset_y` | number | 0 | Vertical offset for the value display (pixels). Positive values move down, negative move up |
+| `value_position` | string | `below` | `below` = under the gauge, `inside` = inside the gauge |
+| `value_font_size` | number | | Custom font size for the value (px). Default: 36 for `below`, 32 for `inside` |
+| `value_offset_y` | number | 0 | Vertical offset for the value (px). Positive = down, negative = up |
+
+### Shadows
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_shadow` | boolean | false | Colored shadow around the active LEDs |
+| `background_shadow` | boolean | false | Apply severity color to the card background gradient |
+| `background_shadow_intensity` | number | 0.5 | Intensity of background shadow (0 = invisible, 1 = strong) |
+| `center_shadow` | boolean | false | Colored shadow in the center of the gauge |
+| `center_shadow_blur` | number | 35 | Center shadow blur radius |
+| `center_shadow_spread` | number | 20 | Center shadow spread |
+| `center_shadow_size` | number | 70 | Center shadow size (% of gauge radius) |
+
+### Display
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `transparent_card` | boolean | false | Transparent card background |
+| `transparent_gauge` | boolean | false | Transparent gauge background |
+| `use_ha_card` | boolean | false | Wrap card in `<ha-card>` element (adds HA card styling) |
 
 ### Animation
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `smooth_transitions` | boolean | true | Smooth animation of changes |
+| `smooth_transitions` | boolean | true | Smooth animation on value changes |
 | `animation_duration` | number | 800 | Animation duration (ms) |
 
 ### Color Thresholds (severity)
+
+Severity thresholds define the gauge color based on the current value. Each entry sets the color for values **above** the specified threshold. Entries should be ordered from lowest to highest value.
 
 ```yaml
 type: custom:half-gauge-card
 entity: sensor.humidity
 severity:
-  - color: '#00bfff'  # Blue
+  - color: '#00bfff'  # Blue — below 40
     value: 0
-  - color: '#4caf50'  # Green
+  - color: '#4caf50'  # Green — 40 to 70
     value: 40
-  - color: '#ff9800'  # Orange
+  - color: '#ff9800'  # Orange — 70 to 90
     value: 70
-  - color: '#f44336'  # Red
+  - color: '#f44336'  # Red — above 90
     value: 90
+```
+
+### Reading an entity attribute
+
+Use `attribute` to display a value from an entity's attributes instead of its state:
+
+```yaml
+type: custom:half-gauge-card
+entity: sensor.my_device
+attribute: battery_level
+name: Battery
+unit: "%"
+min: 0
+max: 100
 ```
 
 ## Examples
@@ -263,7 +311,7 @@ card_background: "radial-gradient(circle, #333, #111)"
 background_shadow: true
 ```
 
-### Example with center shadow and border
+### With Center Shadow and Border
 
 ![Complete Example](image7.png)
 

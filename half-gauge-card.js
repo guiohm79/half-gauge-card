@@ -471,7 +471,10 @@ class HalfGaugeCard extends HTMLElement {
     const entity = hass.states[this.config.entity];
     if (!entity) return;
 
-    const state = parseFloat(entity.state);
+    const rawValue = this.config.attribute
+      ? entity.attributes[this.config.attribute]
+      : entity.state;
+    const state = parseFloat(rawValue);
     if (isNaN(state)) return;
 
     if (this.config.smooth_transitions && this.previousState !== null && this.previousState !== state) {
@@ -512,15 +515,19 @@ class HalfGaugeCardEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = { ...config };
-    this._render();
+    if (this._hass) {
+      this._updateForm();
+    }
   }
 
   set hass(hass) {
+    const firstHass = !this._hass;
     this._hass = hass;
-    // Only update entity picker if it exists
-    const entityPicker = this.querySelector('ha-entity-picker');
-    if (entityPicker && !entityPicker.hass) {
-      entityPicker.hass = hass;
+    if (firstHass) {
+      this._buildEditor();
+    } else {
+      const form = this.querySelector('ha-form');
+      if (form) form.hass = hass;
     }
   }
 
@@ -528,636 +535,533 @@ class HalfGaugeCardEditor extends HTMLElement {
     return this._hass;
   }
 
-  _render() {
-    if (!this._hass) return;
+  _getSchema() {
+    return [
+      { name: 'entity', required: true, selector: { entity: {} } },
+      ...(this._config?.entity ? [
+        { name: 'attribute', selector: { attribute: { entity_id: this._config.entity } } }
+      ] : []),
+      { name: 'name', selector: { text: {} } },
+      { name: 'unit', selector: { text: {} } },
+      {
+        type: 'expandable', title: 'Range & Decimals', icon: 'mdi:tune-vertical',
+        schema: [
+          { name: 'min', selector: { number: { mode: 'box' } } },
+          { name: 'max', selector: { number: { mode: 'box' } } },
+          { name: 'decimals', selector: { number: { min: 0, max: 10, mode: 'box' } } },
+        ]
+      },
+      {
+        type: 'expandable', title: 'Appearance', icon: 'mdi:gauge',
+        schema: [
+          { name: 'gauge_size', selector: { number: { min: 100, max: 400, step: 10, mode: 'slider' } } },
+          { name: 'leds_count', selector: { number: { min: 10, max: 200, step: 5, mode: 'slider' } } },
+          { name: 'led_size', selector: { number: { min: 4, max: 20, mode: 'slider' } } },
+          { name: 'value_position', selector: { select: { options: [
+            { value: 'below', label: 'Below' },
+            { value: 'inside', label: 'Inside' }
+          ] } } },
+          { name: 'value_font_size', selector: { number: { min: 8, max: 100, mode: 'box' } } },
+          { name: 'value_offset_y', selector: { number: { min: -100, max: 100, mode: 'slider' } } },
+        ]
+      },
+      {
+        type: 'expandable', title: 'Shadows', icon: 'mdi:blur',
+        schema: [
+          { name: 'enable_shadow', selector: { boolean: {} } },
+          { name: 'background_shadow', selector: { boolean: {} } },
+          { name: 'background_shadow_intensity', selector: { number: { min: 0, max: 1, step: 0.05, mode: 'slider' } } },
+          { name: 'center_shadow', selector: { boolean: {} } },
+          { name: 'center_shadow_blur', selector: { number: { min: 0, max: 200, mode: 'slider' } } },
+          { name: 'center_shadow_spread', selector: { number: { min: 0, max: 50, mode: 'slider' } } },
+          { name: 'center_shadow_size', selector: { number: { min: 0, max: 200, mode: 'slider' } } },
+        ]
+      },
+      {
+        type: 'expandable', title: 'Display', icon: 'mdi:eye',
+        schema: [
+          { name: 'transparent_card', selector: { boolean: {} } },
+          { name: 'transparent_gauge', selector: { boolean: {} } },
+          { name: 'hide_inactive_leds', selector: { boolean: {} } },
+          { name: 'use_ha_card', selector: { boolean: {} } },
+        ]
+      },
+      {
+        type: 'expandable', title: 'Animation', icon: 'mdi:motion-play',
+        schema: [
+          { name: 'smooth_transitions', selector: { boolean: {} } },
+          { name: 'animation_duration', selector: { number: { min: 100, max: 2000, step: 100, mode: 'slider' } } },
+        ]
+      },
+    ];
+  }
 
-    const config = this._config || {};
+  _computeLabel(schema) {
+    const labels = {
+      entity: 'Entity',
+      attribute: 'Attribute (optional)',
+      name: 'Name',
+      unit: 'Unit of measurement',
+      min: 'Minimum value',
+      max: 'Maximum value',
+      decimals: 'Decimals',
+      gauge_size: 'Gauge size (px)',
+      leds_count: 'Number of LEDs',
+      led_size: 'LED size (px)',
+      value_position: 'Value position',
+      value_font_size: 'Font size (px) — empty = auto',
+      value_offset_y: 'Vertical offset (px)',
+      text_color: 'Value color',
+      unit_color: 'Unit color',
+      title_color: 'Title color',
+      card_background: 'Card background',
+      gauge_background: 'Gauge background',
+      enable_shadow: 'Enable LED shadow',
+      background_shadow: 'Background severity shadow',
+      background_shadow_intensity: 'Shadow intensity',
+      center_shadow: 'Center shadow',
+      center_shadow_blur: 'Blur radius',
+      center_shadow_spread: 'Spread',
+      center_shadow_size: 'Size (%)',
+      transparent_card: 'Transparent card',
+      transparent_gauge: 'Transparent gauge',
+      hide_inactive_leds: 'Hide inactive LEDs',
+      use_ha_card: 'Use ha-card wrapper',
+      smooth_transitions: 'Smooth transitions',
+      animation_duration: 'Animation duration (ms)',
+    };
+    return labels[schema.name] || schema.name;
+  }
 
-    // Create container
+  _buildEditor() {
     this.innerHTML = '';
-    const container = document.createElement('div');
-    container.className = 'form';
-    container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;';
 
-    // Helper to create section
-    const createSection = (title) => {
-      const section = document.createElement('div');
-      section.className = 'section';
-      section.style.cssText = 'border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;padding:16px;';
-      
-      const sectionTitle = document.createElement('div');
-      sectionTitle.className = 'section-title';
-      sectionTitle.style.cssText = 'font-size:14px;font-weight:500;margin-bottom:12px;color:var(--primary-text-color);text-transform:uppercase;letter-spacing:0.5px;';
-      sectionTitle.textContent = title;
-      
-      section.appendChild(sectionTitle);
-      return section;
-    };
+    const form = document.createElement('ha-form');
+    form.hass = this._hass;
+    form.data = this._config;
+    form.schema = this._getSchema();
+    form.computeLabel = (s) => this._computeLabel(s);
 
-    // Helper to create row
-    const createRow = (labelText) => {
+    const COLOR_KEYS = ['text_color', 'unit_color', 'title_color', 'card_background', 'gauge_background'];
+
+    form.addEventListener('value-changed', (e) => {
+      const formData = e.detail.value;
+      const entityChanged = formData.entity !== this._config.entity;
+      // Preserve fields managed outside ha-form (colors + severity)
+      const preserved = {};
+      COLOR_KEYS.forEach(k => { if (this._config[k]) preserved[k] = this._config[k]; });
+      if (this._config.severity?.length) preserved.severity = this._config.severity;
+      this._config = { ...formData, ...preserved };
+      if (entityChanged) form.schema = this._getSchema();
+      this._dispatchConfigChanged();
+      this._renderSeveritySection();
+    });
+
+    this.appendChild(form);
+
+    // Colors panel — panel element is permanent, only content rebuilds
+    const colorPanel = document.createElement('ha-expansion-panel');
+    colorPanel.header = 'Colors';
+    colorPanel.outlined = true;
+    this._colorsContent = document.createElement('div');
+    this._colorsContent.style.cssText = 'padding:8px 16px 12px;';
+    colorPanel.appendChild(this._colorsContent);
+    this.appendChild(colorPanel);
+
+    // Severity panel — same pattern
+    const severityPanel = document.createElement('ha-expansion-panel');
+    severityPanel.header = 'Color Thresholds (Severity)';
+    severityPanel.outlined = true;
+    this._severityContent = document.createElement('div');
+    this._severityContent.style.cssText = 'padding:8px 16px 12px;';
+    severityPanel.appendChild(this._severityContent);
+    this.appendChild(severityPanel);
+
+    this._renderColorsSection();
+    this._renderSeveritySection();
+  }
+
+  _updateForm() {
+    const form = this.querySelector('ha-form');
+    if (!form) { this._buildEditor(); return; }
+    form.data = this._config;
+    form.schema = this._getSchema();
+    this._renderColorsSection();
+    this._renderSeveritySection();
+  }
+
+  _isHexColor(val) {
+    return /^#[0-9a-fA-F]{3,8}$/.test((val || '').trim());
+  }
+
+  _renderColorsSection() {
+    if (!this._colorsContent) return;
+    const c = this._colorsContent;
+    c.innerHTML = '';
+
+    const IS = 'background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,0.15));border-radius:4px;padding:5px 8px;font-size:13px;box-sizing:border-box;';
+
+    // Simple color fields
+    [
+      { key: 'text_color',  label: 'Value color',  ph: '#ffffff' },
+      { key: 'unit_color',  label: 'Unit color',   ph: '#dddddd' },
+      { key: 'title_color', label: 'Title color',  ph: '#ffffff' },
+    ].forEach(({ key, label, ph }) => {
       const row = document.createElement('div');
-      row.className = 'row';
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:40px;';
-      
-      const label = document.createElement('label');
-      label.style.cssText = 'flex:0 0 140px;font-size:14px;color:var(--primary-text-color);';
-      label.textContent = labelText;
-      
-      row.appendChild(label);
-      return row;
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'flex:0 0 120px;font-size:13px;color:var(--primary-text-color);';
+      lbl.textContent = label;
+      const sw = document.createElement('input');
+      sw.type = 'color';
+      sw.style.cssText = 'width:36px;height:36px;border:none;border-radius:6px;padding:2px;cursor:pointer;background:none;flex-shrink:0;';
+      const cv = this._config[key] || '';
+      sw.value = this._isHexColor(cv) ? cv : '#000000';
+      const txt = document.createElement('input');
+      txt.style.cssText = IS + 'flex:1;'; txt.value = cv; txt.placeholder = ph;
+      sw.addEventListener('input', (e) => { txt.value = e.target.value; this._setColorConfig(key, e.target.value); });
+      txt.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; this._setColorConfig(key, e.target.value); });
+      row.appendChild(lbl); row.appendChild(sw); row.appendChild(txt);
+      c.appendChild(row);
+    });
+
+    // Background gradient fields
+    [
+      { key: 'card_background',  label: 'Card background'  },
+      { key: 'gauge_background', label: 'Gauge background' },
+    ].forEach(({ key, label }) => {
+      const block = document.createElement('div');
+      block.style.cssText = 'margin-bottom:16px;';
+      const lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:13px;color:var(--primary-text-color);margin-bottom:8px;font-weight:500;';
+      lbl.textContent = label;
+      block.appendChild(lbl);
+      block.appendChild(this._createBgEditor(key, IS));
+      c.appendChild(block);
+    });
+  }
+
+  _setColorConfig(key, value) {
+    if (!value) {
+      const { [key]: _removed, ...rest } = this._config;
+      this._config = rest;
+    } else {
+      this._config = { ...this._config, [key]: value };
+    }
+    this._dispatchConfigChanged();
+  }
+
+  _detectBgMode(val) {
+    if (!val) return 'solid';
+    if (/^linear-gradient\(/i.test(val)) return 'linear';
+    if (/^radial-gradient\(/i.test(val)) return 'radial';
+    if (/^#[0-9a-f]{3,8}$/i.test((val || '').trim())) return 'solid';
+    return 'custom';
+  }
+
+  _parseGradientStops(str) {
+    const stops = [];
+    const re = /(#[0-9a-f]{3,8}|rgba?\([^)]+\))\s*(\d+%)?/gi;
+    let m;
+    while ((m = re.exec(str)) !== null)
+      stops.push({ color: m[1], position: m[2] ? parseInt(m[2]) : null });
+    return stops.length >= 2 ? stops : [{ color: '#333333', position: 0 }, { color: '#111111', position: 100 }];
+  }
+
+  _parseLinearGradient(val) {
+    const m = (val || '').match(/linear-gradient\(\s*(-?\d+(?:\.\d+)?deg)\s*,\s*([\s\S]+)\)$/i);
+    return m ? { angle: parseInt(m[1]), stops: this._parseGradientStops(m[2]) } : null;
+  }
+
+  _parseRadialGradient(val) {
+    const m = (val || '').match(/radial-gradient\(\s*(circle|ellipse)\s*,\s*([\s\S]+)\)$/i);
+    return m ? { shape: m[1], stops: this._parseGradientStops(m[2]) } : null;
+  }
+
+  _buildLinearGradient(angle, stops) {
+    return `linear-gradient(${angle}deg, ${stops.map(s => s.position != null ? `${s.color} ${s.position}%` : s.color).join(', ')})`;
+  }
+
+  _buildRadialGradient(shape, stops) {
+    return `radial-gradient(${shape}, ${stops.map(s => s.position != null ? `${s.color} ${s.position}%` : s.color).join(', ')})`;
+  }
+
+  _createBgEditor(key, IS) {
+    const val = this._config[key] || '';
+    let mode = this._detectBgMode(val);
+    const parsedL = this._parseLinearGradient(val);
+    const parsedR = this._parseRadialGradient(val);
+    let angle = parsedL?.angle ?? 135;
+    let shape = parsedR?.shape ?? 'circle';
+    let stops = (parsedL || parsedR)?.stops ?? [{ color: '#333333', position: 0 }, { color: '#111111', position: 100 }];
+
+    const SW = 'width:30px;height:30px;border:none;border-radius:5px;padding:2px;cursor:pointer;background:none;flex-shrink:0;';
+    const wrapper = document.createElement('div');
+
+    // Preview bar
+    const preview = document.createElement('div');
+    preview.style.cssText = 'height:22px;border-radius:6px;border:1px solid var(--divider-color,rgba(255,255,255,0.15));margin-bottom:8px;';
+    preview.style.background = val || 'transparent';
+    wrapper.appendChild(preview);
+
+    const save = (cssVal) => {
+      preview.style.background = cssVal || 'transparent';
+      this._setColorConfig(key, cssVal);
     };
 
-    // ===== SECTION: Basic =====
-    const basicSection = createSection('Basic Settings');
-
-    // Entity
-    const entityRow = createRow('Entity *');
-    const entityPicker = document.createElement('ha-entity-picker');
-    entityPicker.style.cssText = 'flex:1;';
-    entityPicker.hass = this._hass;
-    entityPicker.value = config.entity || '';
-    entityPicker.allowCustomEntity = true;
-    entityPicker.addEventListener('value-changed', (e) => {
-      this._updateConfig('entity', e.detail.value);
+    // Mode tab bar
+    const tabBar = document.createElement('div');
+    tabBar.style.cssText = 'display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;';
+    const setActiveTab = (m) => tabBar.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.mode === m;
+      b.style.background = on ? 'var(--primary-color,#03a9f4)' : 'transparent';
+      b.style.color = on ? '#fff' : 'var(--secondary-text-color)';
     });
-    entityRow.appendChild(entityPicker);
-    basicSection.appendChild(entityRow);
+    wrapper.appendChild(tabBar);
 
-    // Name
-    const nameRow = createRow('Name');
-    const nameInput = document.createElement('ha-textfield');
-    nameInput.style.cssText = 'flex:1;';
-    nameInput.value = config.name || '';
-    nameInput.placeholder = 'Half Gauge';
-    nameInput.addEventListener('change', (e) => {
-      this._updateConfig('name', e.target.value);
-    });
-    nameRow.appendChild(nameInput);
-    basicSection.appendChild(nameRow);
+    const content = document.createElement('div');
+    wrapper.appendChild(content);
 
-    // Unit
-    const unitRow = createRow('Unit');
-    const unitInput = document.createElement('ha-textfield');
-    unitInput.style.cssText = 'flex:1;';
-    unitInput.value = config.unit || '';
-    unitInput.placeholder = '%';
-    unitInput.addEventListener('change', (e) => {
-      this._updateConfig('unit', e.target.value);
-    });
-    unitRow.appendChild(unitInput);
-    basicSection.appendChild(unitRow);
-
-    // Min
-    const minRow = createRow('Min Value');
-    const minInput = document.createElement('ha-textfield');
-    minInput.style.cssText = 'flex:1;';
-    minInput.type = 'number';
-    minInput.value = config.min !== undefined ? config.min : 0;
-    minInput.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      if (!isNaN(val)) this._updateConfig('min', val);
-    });
-    minRow.appendChild(minInput);
-    basicSection.appendChild(minRow);
-
-    // Max
-    const maxRow = createRow('Max Value');
-    const maxInput = document.createElement('ha-textfield');
-    maxInput.style.cssText = 'flex:1;';
-    maxInput.type = 'number';
-    maxInput.value = config.max !== undefined ? config.max : 100;
-    maxInput.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      if (!isNaN(val)) this._updateConfig('max', val);
-    });
-    maxRow.appendChild(maxInput);
-    basicSection.appendChild(maxRow);
-
-    // Decimals
-    const decimalsRow = createRow('Decimals');
-    const decimalsInput = document.createElement('ha-textfield');
-    decimalsInput.style.cssText = 'flex:1;';
-    decimalsInput.type = 'number';
-    decimalsInput.value = config.decimals !== undefined ? config.decimals : 0;
-    decimalsInput.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      if (!isNaN(val)) this._updateConfig('decimals', val);
-    });
-    decimalsRow.appendChild(decimalsInput);
-    basicSection.appendChild(decimalsRow);
-
-    container.appendChild(basicSection);
-
-    // ===== SECTION: Visual =====
-    const visualSection = createSection('Visual Settings');
-
-    // Gauge Size
-    const gaugeSizeRow = createRow('Gauge Size (px)');
-    const gaugeSizeSlider = document.createElement('ha-slider');
-    gaugeSizeSlider.style.cssText = 'flex:1;';
-    gaugeSizeSlider.min = 100;
-    gaugeSizeSlider.max = 400;
-    gaugeSizeSlider.step = 10;
-    gaugeSizeSlider.value = config.gauge_size || 200;
-    gaugeSizeSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue1.textContent = val;
-      this._updateConfig('gauge_size', val);
-    });
-    const sliderValue1 = document.createElement('span');
-    sliderValue1.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue1.textContent = config.gauge_size || 200;
-    gaugeSizeRow.appendChild(gaugeSizeSlider);
-    gaugeSizeRow.appendChild(sliderValue1);
-    visualSection.appendChild(gaugeSizeRow);
-
-    // LEDs Count
-    const ledsCountRow = createRow('LEDs Count');
-    const ledsCountSlider = document.createElement('ha-slider');
-    ledsCountSlider.style.cssText = 'flex:1;';
-    ledsCountSlider.min = 10;
-    ledsCountSlider.max = 200;
-    ledsCountSlider.step = 5;
-    ledsCountSlider.value = config.leds_count || 50;
-    ledsCountSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue2.textContent = val;
-      this._updateConfig('leds_count', val);
-    });
-    const sliderValue2 = document.createElement('span');
-    sliderValue2.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue2.textContent = config.leds_count || 50;
-    ledsCountRow.appendChild(ledsCountSlider);
-    ledsCountRow.appendChild(sliderValue2);
-    visualSection.appendChild(ledsCountRow);
-
-    // LED Size
-    const ledSizeRow = createRow('LED Size (px)');
-    const ledSizeSlider = document.createElement('ha-slider');
-    ledSizeSlider.style.cssText = 'flex:1;';
-    ledSizeSlider.min = 4;
-    ledSizeSlider.max = 20;
-    ledSizeSlider.step = 1;
-    ledSizeSlider.value = config.led_size || 10;
-    ledSizeSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue3.textContent = val;
-      this._updateConfig('led_size', val);
-    });
-    const sliderValue3 = document.createElement('span');
-    sliderValue3.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue3.textContent = config.led_size || 10;
-    ledSizeRow.appendChild(ledSizeSlider);
-    ledSizeRow.appendChild(sliderValue3);
-    visualSection.appendChild(ledSizeRow);
-
-    // Value Position
-    const valuePosRow = createRow('Value Position');
-    const valuePosSelect = document.createElement('ha-select');
-    valuePosSelect.style.cssText = 'flex:1;';
-    valuePosSelect.value = config.value_position || 'below';
-    
-    const option1 = document.createElement('mwc-list-item');
-    option1.value = 'below';
-    option1.textContent = 'Below';
-    
-    const option2 = document.createElement('mwc-list-item');
-    option2.value = 'inside';
-    option2.textContent = 'Inside';
-    
-    valuePosSelect.appendChild(option1);
-    valuePosSelect.appendChild(option2);
-    valuePosSelect.addEventListener('selected', (e) => {
-      const item = e.target.selectedItem;
-      if (item) this._updateConfig('value_position', item.value);
-    });
-    valuePosSelect.addEventListener('closed', (e) => e.stopPropagation());
-    valuePosRow.appendChild(valuePosSelect);
-    visualSection.appendChild(valuePosRow);
-
-    // Value Font Size
-    const fontSizeRow = createRow('Value Font Size');
-    const fontSizeInput = document.createElement('ha-textfield');
-    fontSizeInput.style.cssText = 'flex:1;';
-    fontSizeInput.type = 'number';
-    fontSizeInput.value = config.value_font_size !== undefined ? config.value_font_size : '';
-    fontSizeInput.placeholder = 'Auto';
-    fontSizeInput.addEventListener('change', (e) => {
-      const val = e.target.value === '' ? null : parseFloat(e.target.value);
-      this._updateConfig('value_font_size', val);
-    });
-    fontSizeRow.appendChild(fontSizeInput);
-    visualSection.appendChild(fontSizeRow);
-
-    // Value Offset Y
-    const offsetRow = createRow('Value Offset Y');
-    const offsetSlider = document.createElement('ha-slider');
-    offsetSlider.style.cssText = 'flex:1;';
-    offsetSlider.min = -50;
-    offsetSlider.max = 50;
-    offsetSlider.step = 1;
-    offsetSlider.value = config.value_offset_y || 0;
-    offsetSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue4.textContent = val;
-      this._updateConfig('value_offset_y', val);
-    });
-    const sliderValue4 = document.createElement('span');
-    sliderValue4.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue4.textContent = config.value_offset_y || 0;
-    offsetRow.appendChild(offsetSlider);
-    offsetRow.appendChild(sliderValue4);
-    visualSection.appendChild(offsetRow);
-
-    container.appendChild(visualSection);
-
-    // ===== SECTION: Colors =====
-    const colorsSection = createSection('Colors');
-
-    // Text Color
-    const textColorRow = createRow('Text Color');
-    const textColorInput = document.createElement('ha-textfield');
-    textColorInput.style.cssText = 'flex:1;';
-    textColorInput.value = config.text_color || '';
-    textColorInput.placeholder = '#fff';
-    textColorInput.addEventListener('change', (e) => {
-      this._updateConfig('text_color', e.target.value);
-    });
-    textColorRow.appendChild(textColorInput);
-    colorsSection.appendChild(textColorRow);
-
-    // Unit Color
-    const unitColorRow = createRow('Unit Color');
-    const unitColorInput = document.createElement('ha-textfield');
-    unitColorInput.style.cssText = 'flex:1;';
-    unitColorInput.value = config.unit_color || '';
-    unitColorInput.placeholder = '#ddd';
-    unitColorInput.addEventListener('change', (e) => {
-      this._updateConfig('unit_color', e.target.value);
-    });
-    unitColorRow.appendChild(unitColorInput);
-    colorsSection.appendChild(unitColorRow);
-
-    // Title Color
-    const titleColorRow = createRow('Title Color');
-    const titleColorInput = document.createElement('ha-textfield');
-    titleColorInput.style.cssText = 'flex:1;';
-    titleColorInput.value = config.title_color || '';
-    titleColorInput.placeholder = '#fff';
-    titleColorInput.addEventListener('change', (e) => {
-      this._updateConfig('title_color', e.target.value);
-    });
-    titleColorRow.appendChild(titleColorInput);
-    colorsSection.appendChild(titleColorRow);
-
-    // Card Background
-    const cardBgRow = createRow('Card Background');
-    const cardBgInput = document.createElement('ha-textfield');
-    cardBgInput.style.cssText = 'flex:1;';
-    cardBgInput.value = config.card_background || '';
-    cardBgInput.placeholder = '#222 or gradient';
-    cardBgInput.addEventListener('change', (e) => {
-      this._updateConfig('card_background', e.target.value);
-    });
-    cardBgRow.appendChild(cardBgInput);
-    colorsSection.appendChild(cardBgRow);
-
-    // Gauge Background
-    const gaugeBgRow = createRow('Gauge Background');
-    const gaugeBgInput = document.createElement('ha-textfield');
-    gaugeBgInput.style.cssText = 'flex:1;';
-    gaugeBgInput.value = config.gauge_background || '';
-    gaugeBgInput.placeholder = '#333 or gradient';
-    gaugeBgInput.addEventListener('change', (e) => {
-      this._updateConfig('gauge_background', e.target.value);
-    });
-    gaugeBgRow.appendChild(gaugeBgInput);
-    colorsSection.appendChild(gaugeBgRow);
-
-    container.appendChild(colorsSection);
-
-    // ===== SECTION: Shadows =====
-    const shadowsSection = createSection('Shadows');
-
-    // Enable Shadow
-    const enableShadowRow = createRow('Enable Shadow');
-    const enableShadowSwitch = document.createElement('ha-switch');
-    enableShadowSwitch.style.cssText = 'margin-left:auto;';
-    enableShadowSwitch.checked = config.enable_shadow || false;
-    enableShadowSwitch.addEventListener('change', (e) => {
-      this._updateConfig('enable_shadow', e.target.checked);
-    });
-    const enableShadowFormfield = document.createElement('ha-formfield');
-    enableShadowFormfield.style.cssText = 'flex:1;';
-    enableShadowFormfield.appendChild(enableShadowSwitch);
-    enableShadowRow.appendChild(enableShadowFormfield);
-    shadowsSection.appendChild(enableShadowRow);
-
-    // Background Shadow
-    const bgShadowRow = createRow('Background Shadow');
-    const bgShadowSwitch = document.createElement('ha-switch');
-    bgShadowSwitch.style.cssText = 'margin-left:auto;';
-    bgShadowSwitch.checked = config.background_shadow || false;
-    bgShadowSwitch.addEventListener('change', (e) => {
-      this._updateConfig('background_shadow', e.target.checked);
-    });
-    const bgShadowFormfield = document.createElement('ha-formfield');
-    bgShadowFormfield.style.cssText = 'flex:1;';
-    bgShadowFormfield.appendChild(bgShadowSwitch);
-    bgShadowRow.appendChild(bgShadowFormfield);
-    shadowsSection.appendChild(bgShadowRow);
-
-    // BG Shadow Intensity
-    const bgIntensityRow = createRow('BG Shadow Intensity');
-    const bgIntensitySlider = document.createElement('ha-slider');
-    bgIntensitySlider.style.cssText = 'flex:1;';
-    bgIntensitySlider.min = 0;
-    bgIntensitySlider.max = 1;
-    bgIntensitySlider.step = 0.1;
-    bgIntensitySlider.value = config.background_shadow_intensity !== undefined ? config.background_shadow_intensity : 0.5;
-    bgIntensitySlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue5.textContent = val;
-      this._updateConfig('background_shadow_intensity', val);
-    });
-    const sliderValue5 = document.createElement('span');
-    sliderValue5.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue5.textContent = config.background_shadow_intensity !== undefined ? config.background_shadow_intensity : 0.5;
-    bgIntensityRow.appendChild(bgIntensitySlider);
-    bgIntensityRow.appendChild(sliderValue5);
-    shadowsSection.appendChild(bgIntensityRow);
-
-    // Center Shadow
-    const centerShadowRow = createRow('Center Shadow');
-    const centerShadowSwitch = document.createElement('ha-switch');
-    centerShadowSwitch.style.cssText = 'margin-left:auto;';
-    centerShadowSwitch.checked = config.center_shadow || false;
-    centerShadowSwitch.addEventListener('change', (e) => {
-      this._updateConfig('center_shadow', e.target.checked);
-    });
-    const centerShadowFormfield = document.createElement('ha-formfield');
-    centerShadowFormfield.style.cssText = 'flex:1;';
-    centerShadowFormfield.appendChild(centerShadowSwitch);
-    centerShadowRow.appendChild(centerShadowFormfield);
-    shadowsSection.appendChild(centerShadowRow);
-
-    // Center Shadow Blur
-    const centerBlurRow = createRow('Center Shadow Blur');
-    const centerBlurSlider = document.createElement('ha-slider');
-    centerBlurSlider.style.cssText = 'flex:1;';
-    centerBlurSlider.min = 10;
-    centerBlurSlider.max = 100;
-    centerBlurSlider.step = 5;
-    centerBlurSlider.value = config.center_shadow_blur || 35;
-    centerBlurSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue6.textContent = val;
-      this._updateConfig('center_shadow_blur', val);
-    });
-    const sliderValue6 = document.createElement('span');
-    sliderValue6.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue6.textContent = config.center_shadow_blur || 35;
-    centerBlurRow.appendChild(centerBlurSlider);
-    centerBlurRow.appendChild(sliderValue6);
-    shadowsSection.appendChild(centerBlurRow);
-
-    // Center Shadow Spread
-    const centerSpreadRow = createRow('Center Shadow Spread');
-    const centerSpreadSlider = document.createElement('ha-slider');
-    centerSpreadSlider.style.cssText = 'flex:1;';
-    centerSpreadSlider.min = 5;
-    centerSpreadSlider.max = 50;
-    centerSpreadSlider.step = 5;
-    centerSpreadSlider.value = config.center_shadow_spread || 20;
-    centerSpreadSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue7.textContent = val;
-      this._updateConfig('center_shadow_spread', val);
-    });
-    const sliderValue7 = document.createElement('span');
-    sliderValue7.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue7.textContent = config.center_shadow_spread || 20;
-    centerSpreadRow.appendChild(centerSpreadSlider);
-    centerSpreadRow.appendChild(sliderValue7);
-    shadowsSection.appendChild(centerSpreadRow);
-
-    // Center Shadow Size
-    const centerSizeRow = createRow('Center Shadow Size (%)');
-    const centerSizeSlider = document.createElement('ha-slider');
-    centerSizeSlider.style.cssText = 'flex:1;';
-    centerSizeSlider.min = 30;
-    centerSizeSlider.max = 100;
-    centerSizeSlider.step = 5;
-    centerSizeSlider.value = config.center_shadow_size || 70;
-    centerSizeSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue8.textContent = val;
-      this._updateConfig('center_shadow_size', val);
-    });
-    const sliderValue8 = document.createElement('span');
-    sliderValue8.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue8.textContent = config.center_shadow_size || 70;
-    centerSizeRow.appendChild(centerSizeSlider);
-    centerSizeRow.appendChild(sliderValue8);
-    shadowsSection.appendChild(centerSizeRow);
-
-    container.appendChild(shadowsSection);
-
-    // ===== SECTION: Transparency =====
-    const transparencySection = createSection('Transparency');
-
-    // Transparent Card
-    const transCardRow = createRow('Transparent Card');
-    const transCardSwitch = document.createElement('ha-switch');
-    transCardSwitch.style.cssText = 'margin-left:auto;';
-    transCardSwitch.checked = config.transparent_card || false;
-    transCardSwitch.addEventListener('change', (e) => {
-      this._updateConfig('transparent_card', e.target.checked);
-    });
-    const transCardFormfield = document.createElement('ha-formfield');
-    transCardFormfield.style.cssText = 'flex:1;';
-    transCardFormfield.appendChild(transCardSwitch);
-    transCardRow.appendChild(transCardFormfield);
-    transparencySection.appendChild(transCardRow);
-
-    // Transparent Gauge
-    const transGaugeRow = createRow('Transparent Gauge');
-    const transGaugeSwitch = document.createElement('ha-switch');
-    transGaugeSwitch.style.cssText = 'margin-left:auto;';
-    transGaugeSwitch.checked = config.transparent_gauge || false;
-    transGaugeSwitch.addEventListener('change', (e) => {
-      this._updateConfig('transparent_gauge', e.target.checked);
-    });
-    const transGaugeFormfield = document.createElement('ha-formfield');
-    transGaugeFormfield.style.cssText = 'flex:1;';
-    transGaugeFormfield.appendChild(transGaugeSwitch);
-    transGaugeRow.appendChild(transGaugeFormfield);
-    transparencySection.appendChild(transGaugeRow);
-
-    // Hide Inactive LEDs
-    const hideLedsRow = createRow('Hide Inactive LEDs');
-    const hideLedsSwitch = document.createElement('ha-switch');
-    hideLedsSwitch.style.cssText = 'margin-left:auto;';
-    hideLedsSwitch.checked = config.hide_inactive_leds || false;
-    hideLedsSwitch.addEventListener('change', (e) => {
-      this._updateConfig('hide_inactive_leds', e.target.checked);
-    });
-    const hideLedsFormfield = document.createElement('ha-formfield');
-    hideLedsFormfield.style.cssText = 'flex:1;';
-    hideLedsFormfield.appendChild(hideLedsSwitch);
-    hideLedsRow.appendChild(hideLedsFormfield);
-    transparencySection.appendChild(hideLedsRow);
-
-    // Use HA Card Wrapper
-    const useHaCardRow = createRow('Use <ha-card> Wrapper');
-    const useHaCardSwitch = document.createElement('ha-switch');
-    useHaCardSwitch.style.cssText = 'margin-left:auto;';
-    useHaCardSwitch.checked = config.use_ha_card || false;
-    useHaCardSwitch.addEventListener('change', (e) => {
-      this._updateConfig('use_ha_card', e.target.checked);
-    });
-    const useHaCardFormfield = document.createElement('ha-formfield');
-    useHaCardFormfield.style.cssText = 'flex:1;';
-    useHaCardFormfield.appendChild(useHaCardSwitch);
-    useHaCardRow.appendChild(useHaCardFormfield);
-    transparencySection.appendChild(useHaCardRow);
-
-    container.appendChild(transparencySection);
-
-    // ===== SECTION: Animation =====
-    const animationSection = createSection('Animation');
-
-    // Smooth Transitions
-    const smoothRow = createRow('Smooth Transitions');
-    const smoothSwitch = document.createElement('ha-switch');
-    smoothSwitch.style.cssText = 'margin-left:auto;';
-    smoothSwitch.checked = config.smooth_transitions !== false;
-    smoothSwitch.addEventListener('change', (e) => {
-      this._updateConfig('smooth_transitions', e.target.checked);
-    });
-    const smoothFormfield = document.createElement('ha-formfield');
-    smoothFormfield.style.cssText = 'flex:1;';
-    smoothFormfield.appendChild(smoothSwitch);
-    smoothRow.appendChild(smoothFormfield);
-    animationSection.appendChild(smoothRow);
-
-    // Animation Duration
-    const animDurationRow = createRow('Animation Duration (ms)');
-    const animDurationSlider = document.createElement('ha-slider');
-    animDurationSlider.style.cssText = 'flex:1;';
-    animDurationSlider.min = 100;
-    animDurationSlider.max = 2000;
-    animDurationSlider.step = 100;
-    animDurationSlider.value = config.animation_duration || 800;
-    animDurationSlider.addEventListener('change', (e) => {
-      const val = parseFloat(e.target.value);
-      sliderValue9.textContent = val;
-      this._updateConfig('animation_duration', val);
-    });
-    const sliderValue9 = document.createElement('span');
-    sliderValue9.style.cssText = 'flex:0 0 50px;text-align:right;font-size:14px;color:var(--secondary-text-color);';
-    sliderValue9.textContent = config.animation_duration || 800;
-    animDurationRow.appendChild(animDurationSlider);
-    animDurationRow.appendChild(sliderValue9);
-    animationSection.appendChild(animDurationRow);
-
-    container.appendChild(animationSection);
-
-    // ===== SECTION: Severity =====
-    const severitySection = createSection('Color Thresholds (Severity)');
-
-    if (config.severity && config.severity.length > 0) {
-      config.severity.forEach((item, index) => {
-        const severityRow = document.createElement('div');
-        severityRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
-
-        const valueInput = document.createElement('ha-textfield');
-        valueInput.style.cssText = 'flex:0 0 80px;';
-        valueInput.type = 'number';
-        valueInput.value = item.value;
-        valueInput.placeholder = 'Value %';
-        valueInput.addEventListener('change', (e) => {
-          this._updateSeverity(index, 'value', parseFloat(e.target.value) || 0);
+    // Shared stops editor
+    const makeStopsEditor = (onUpdate) => {
+      const div = document.createElement('div');
+      const render = () => {
+        div.innerHTML = '';
+        stops.forEach((stop, i) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+          const sw = document.createElement('input');
+          sw.type = 'color'; sw.style.cssText = SW;
+          sw.value = this._isHexColor(stop.color) ? stop.color : '#333333';
+          const ct = document.createElement('input');
+          ct.style.cssText = IS + 'width:76px;'; ct.value = stop.color; ct.placeholder = '#333';
+          const pos = document.createElement('input');
+          pos.type = 'number'; pos.min = 0; pos.max = 100;
+          pos.style.cssText = IS + 'width:54px;';
+          pos.value = stop.position ?? ''; pos.placeholder = '%';
+          sw.addEventListener('input', (e) => { ct.value = e.target.value; stops[i].color = e.target.value; onUpdate(); });
+          ct.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; stops[i].color = e.target.value; onUpdate(); });
+          pos.addEventListener('change', (e) => { stops[i].position = e.target.value === '' ? null : parseInt(e.target.value); onUpdate(); });
+          row.appendChild(sw); row.appendChild(ct); row.appendChild(pos);
+          if (stops.length > 2) {
+            const del = document.createElement('button');
+            del.textContent = '×';
+            del.style.cssText = 'background:none;border:none;color:var(--secondary-text-color);cursor:pointer;font-size:16px;padding:0 4px;';
+            del.addEventListener('click', () => { stops.splice(i, 1); onUpdate(); render(); });
+            row.appendChild(del);
+          }
+          div.appendChild(row);
         });
+        if (stops.length < 5) {
+          const add = document.createElement('button');
+          add.textContent = '+ Add stop';
+          add.style.cssText = IS + 'cursor:pointer;margin-top:2px;';
+          add.addEventListener('click', () => { stops.push({ color: '#666666', position: null }); onUpdate(); render(); });
+          div.appendChild(add);
+        }
+      };
+      render();
+      return div;
+    };
 
-        const colorInput = document.createElement('ha-textfield');
-        colorInput.style.cssText = 'flex:1;';
-        colorInput.value = item.color;
-        colorInput.placeholder = '#4caf50';
-        colorInput.addEventListener('change', (e) => {
-          this._updateSeverity(index, 'color', e.target.value);
+    const renderContent = (m) => {
+      content.innerHTML = '';
+      if (m === 'solid') {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+        const sw = document.createElement('input');
+        sw.type = 'color'; sw.style.cssText = SW;
+        const cv = this._config[key] || '';
+        sw.value = this._isHexColor(cv) ? cv : '#222222';
+        const txt = document.createElement('input');
+        txt.style.cssText = IS + 'flex:1;'; txt.value = cv; txt.placeholder = '#222222';
+        sw.addEventListener('input', (e) => { txt.value = e.target.value; save(e.target.value); });
+        txt.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; save(e.target.value); });
+        row.appendChild(sw); row.appendChild(txt); content.appendChild(row);
+
+      } else if (m === 'linear') {
+        const ar = document.createElement('div');
+        ar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+        const al = document.createElement('span');
+        al.style.cssText = 'font-size:12px;color:var(--secondary-text-color);width:44px;';
+        al.textContent = 'Angle';
+        const asl = document.createElement('input');
+        asl.type = 'range'; asl.min = 0; asl.max = 360; asl.value = angle; asl.style.cssText = 'flex:1;';
+        const anum = document.createElement('input');
+        anum.type = 'number'; anum.min = 0; anum.max = 360; anum.value = angle;
+        anum.style.cssText = IS + 'width:52px;';
+        const adeg = document.createElement('span');
+        adeg.textContent = '°'; adeg.style.cssText = 'color:var(--secondary-text-color);font-size:13px;';
+        const onA = (v) => { angle = parseInt(v) || 0; asl.value = angle; anum.value = angle; save(this._buildLinearGradient(angle, stops)); };
+        asl.addEventListener('input', (e) => onA(e.target.value));
+        anum.addEventListener('change', (e) => onA(e.target.value));
+        ar.appendChild(al); ar.appendChild(asl); ar.appendChild(anum); ar.appendChild(adeg);
+        content.appendChild(ar);
+        const sl = document.createElement('div');
+        sl.style.cssText = 'font-size:12px;color:var(--secondary-text-color);margin-bottom:4px;';
+        sl.textContent = 'Color stops';
+        content.appendChild(sl);
+        content.appendChild(makeStopsEditor(() => save(this._buildLinearGradient(angle, stops))));
+
+      } else if (m === 'radial') {
+        const sr = document.createElement('div');
+        sr.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+        const shl = document.createElement('span');
+        shl.style.cssText = 'font-size:12px;color:var(--secondary-text-color);width:44px;';
+        shl.textContent = 'Shape';
+        ['circle', 'ellipse'].forEach(s => {
+          const btn = document.createElement('button');
+          btn.textContent = s;
+          btn.style.cssText = `padding:3px 10px;border-radius:12px;cursor:pointer;font-size:12px;border:1px solid var(--divider-color,rgba(255,255,255,0.2));background:${shape === s ? 'var(--primary-color,#03a9f4)' : 'transparent'};color:${shape === s ? '#fff' : 'var(--secondary-text-color)'};`;
+          btn.addEventListener('click', () => {
+            shape = s;
+            sr.querySelectorAll('button').forEach(b => { const on = b.textContent === shape; b.style.background = on ? 'var(--primary-color,#03a9f4)' : 'transparent'; b.style.color = on ? '#fff' : 'var(--secondary-text-color)'; });
+            save(this._buildRadialGradient(shape, stops));
+          });
+          sr.appendChild(btn);
         });
+        sr.insertBefore(shl, sr.firstChild);
+        content.appendChild(sr);
+        const sl = document.createElement('div');
+        sl.style.cssText = 'font-size:12px;color:var(--secondary-text-color);margin-bottom:4px;';
+        sl.textContent = 'Color stops';
+        content.appendChild(sl);
+        content.appendChild(makeStopsEditor(() => save(this._buildRadialGradient(shape, stops))));
 
-        const removeBtn = document.createElement('ha-icon-button');
-        removeBtn.title = 'Remove';
-        removeBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></svg>';
-        removeBtn.addEventListener('click', () => {
-          this._removeSeverity(index);
-        });
+      } else {
+        const txt = document.createElement('input');
+        txt.style.cssText = IS + 'width:100%;';
+        txt.value = this._config[key] || '';
+        txt.placeholder = 'linear-gradient(45deg, #333, #111)';
+        txt.addEventListener('input', (e) => { preview.style.background = e.target.value; });
+        txt.addEventListener('change', (e) => save(e.target.value));
+        content.appendChild(txt);
+      }
+    };
 
-        severityRow.appendChild(valueInput);
-        severityRow.appendChild(colorInput);
-        severityRow.appendChild(removeBtn);
-        severitySection.appendChild(severityRow);
+    [['Solid', 'solid'], ['Linear', 'linear'], ['Radial', 'radial'], ['Custom', 'custom']].forEach(([label, value]) => {
+      const btn = document.createElement('button');
+      btn.textContent = label; btn.dataset.mode = value;
+      btn.style.cssText = `padding:3px 10px;border-radius:12px;cursor:pointer;font-size:12px;border:1px solid var(--divider-color,rgba(255,255,255,0.2));background:${value === mode ? 'var(--primary-color,#03a9f4)' : 'transparent'};color:${value === mode ? '#fff' : 'var(--secondary-text-color)'};`;
+      btn.addEventListener('click', () => {
+        mode = value;
+        if (value === 'linear' && !this._parseLinearGradient(this._config[key] || '')) save(this._buildLinearGradient(angle, stops));
+        if (value === 'radial' && !this._parseRadialGradient(this._config[key] || '')) save(this._buildRadialGradient(shape, stops));
+        setActiveTab(value);
+        renderContent(value);
       });
-    } else {
-      const noSeverity = document.createElement('div');
-      noSeverity.style.cssText = 'color:var(--secondary-text-color);font-size:12px;margin-bottom:8px;';
-      noSeverity.textContent = 'No thresholds defined. Using defaults.';
-      severitySection.appendChild(noSeverity);
+      tabBar.appendChild(btn);
+    });
+
+    renderContent(mode);
+    return wrapper;
+  }
+
+  _renderSeveritySection() {
+    if (!this._severityContent) return;
+    const c = this._severityContent;
+    c.innerHTML = '';
+
+    const SEV_IS = 'background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,0.15));border-radius:4px;padding:6px 8px;font-size:14px;box-sizing:border-box;';
+    const SEV_SW = 'width:34px;height:34px;border:none;border-radius:6px;padding:2px;cursor:pointer;background:none;flex-shrink:0;';
+
+    const severity = this._config.severity || [];
+    severity.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+
+      const valInput = document.createElement('input');
+      valInput.style.cssText = SEV_IS + 'width:80px;';
+      valInput.type = 'number';
+      valInput.value = item.value;
+      valInput.placeholder = 'Value';
+      valInput.addEventListener('change', (e) => {
+        this._updateSeverity(index, 'value', parseFloat(e.target.value) || 0);
+      });
+
+      const colorSwatch = document.createElement('input');
+      colorSwatch.type = 'color';
+      colorSwatch.style.cssText = SEV_SW;
+      colorSwatch.value = this._isHexColor(item.color) ? item.color : '#4caf50';
+
+      const colorInput = document.createElement('input');
+      colorInput.style.cssText = SEV_IS + 'flex:1;';
+      colorInput.value = item.color;
+      colorInput.placeholder = '#4caf50';
+
+      colorSwatch.addEventListener('input', (e) => {
+        colorInput.value = e.target.value;
+        this._updateSeverity(index, 'color', e.target.value);
+      });
+      colorInput.addEventListener('change', (e) => {
+        const v = e.target.value;
+        if (this._isHexColor(v)) colorSwatch.value = v;
+        this._updateSeverity(index, 'color', v);
+      });
+
+      const removeBtn = document.createElement('ha-icon-button');
+      removeBtn.title = 'Remove';
+      removeBtn.innerHTML = '<ha-icon icon="mdi:delete"></ha-icon>';
+      removeBtn.addEventListener('click', () => this._removeSeverity(index));
+
+      row.appendChild(valInput);
+      row.appendChild(colorSwatch);
+      row.appendChild(colorInput);
+      row.appendChild(removeBtn);
+      c.appendChild(row);
+    });
+
+    if (severity.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--secondary-text-color);font-size:13px;margin-bottom:12px;';
+      empty.textContent = 'No thresholds defined. Using defaults.';
+      c.appendChild(empty);
     }
 
     const addBtn = document.createElement('ha-button');
-    addBtn.style.cssText = 'margin-top:8px;';
     addBtn.textContent = 'Add Threshold';
     addBtn.addEventListener('click', () => this._addSeverity());
-    severitySection.appendChild(addBtn);
-
-    container.appendChild(severitySection);
-
-    this.appendChild(container);
+    c.appendChild(addBtn);
   }
+
+  _dispatchConfigChanged() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
 
   _updateSeverity(index, field, value) {
     const severity = [...(this._config.severity || [])];
     severity[index] = { ...severity[index], [field]: value };
-    this._updateConfig('severity', severity);
+    this._config = { ...this._config, severity };
+    this._dispatchConfigChanged();
   }
 
   _addSeverity() {
     const severity = [...(this._config.severity || [])];
-    severity.push({ 
-      color: '#4caf50', 
-      value: severity.length > 0 ? Math.min(100, severity[severity.length - 1].value + 33) : 33 
+    severity.push({
+      color: '#4caf50',
+      value: severity.length > 0 ? Math.min(100, severity[severity.length - 1].value + 33) : 33,
     });
-    this._updateConfig('severity', severity);
-    this._render();
+    this._config = { ...this._config, severity };
+    this._dispatchConfigChanged();
+    this._renderSeveritySection();
   }
 
   _removeSeverity(index) {
     const severity = [...(this._config.severity || [])];
     severity.splice(index, 1);
-    this._updateConfig('severity', severity.length > 0 ? severity : undefined);
-    this._render();
-  }
-
-  _updateConfig(key, value) {
-    const newConfig = { ...this._config };
-    
-    if (value === undefined || value === null || value === '') {
-      delete newConfig[key];
+    if (severity.length > 0) {
+      this._config = { ...this._config, severity };
     } else {
-      newConfig[key] = value;
+      const { severity: _s, ...rest } = this._config;
+      this._config = rest;
     }
-    
-    this._config = newConfig;
-    
-    this.dispatchEvent(new CustomEvent('config-changed', {
-      detail: { config: newConfig },
-      bubbles: true,
-      composed: true
-    }));
+    this._dispatchConfigChanged();
+    this._renderSeveritySection();
   }
 }
 
