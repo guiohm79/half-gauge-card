@@ -1,6 +1,6 @@
 /**
  * Half Gauge Card - A simplified 180° gauge card for Home Assistant
- * Version: 1.0.1
+ * Version: 2.0.0
  */
 
 class HalfGaugeCard extends HTMLElement {
@@ -42,8 +42,47 @@ class HalfGaugeCard extends HTMLElement {
 
     this.previousState = null;
     this.animationInterval = null;
-    
+
+    this.applyTheme();
     this.render();
+  }
+
+  /**
+   * Home Assistant does not apply a card's `theme:` option on its behalf — `hui-card`, the
+   * wrapper it puts around every card, leaves that to the card itself, the way the built-in
+   * ones do in their `updated()`. The frontend helper doing the work lives in the editor
+   * bundle and cannot be imported from a single-file card, so the useful part is reproduced
+   * here: the theme variables are set on the host, and the shadow DOM inherits them.
+   */
+  applyTheme() {
+    // Drop the previous theme first, otherwise switching themes leaves stale variables behind
+    if (this._themeVars) {
+      this._themeVars.forEach((prop) => this.style.removeProperty(prop));
+      this._themeVars = null;
+    }
+    this._appliedTheme = this.config && this.config.theme;
+
+    const themes = this._hass && this._hass.themes;
+    const theme = themes && themes.themes && themes.themes[this._appliedTheme];
+    if (!theme) return;
+
+    // A theme can override part of its variables for the active light/dark mode
+    const mode = themes.darkMode ? 'dark' : 'light';
+    const vars = { ...theme, ...((theme.modes && theme.modes[mode]) || {}) };
+    const applied = [];
+
+    Object.entries(vars).forEach(([key, value]) => {
+      if (key === 'modes' || typeof value !== 'string') return;
+      this.style.setProperty(`--${key}`, value);
+      applied.push(`--${key}`);
+      // Home Assistant exposes an `--rgb-` companion for every hex color of a theme
+      if (!key.startsWith('rgb') && /^#[0-9a-fA-F]{6}$/.test(value.trim())) {
+        this.style.setProperty(`--rgb-${key}`, this.hexToRgb(value));
+        applied.push(`--rgb-${key}`);
+      }
+    });
+
+    this._themeVars = applied;
   }
 
   render() {
@@ -57,11 +96,15 @@ class HalfGaugeCard extends HTMLElement {
     const centerShadowSize = config.center_shadow_size || 70; // percentage
     const centerRadius = (halfSize - ledSize - 5) * (centerShadowSize / 100);
     
-    // Card background - CSS supports colors and gradients natively
-    const cardBg = config.transparent_card ? 'transparent' : (config.card_background || '#222');
-    
+    // Card background - CSS supports colors and gradients natively. Under the ha-card
+    // wrapper the card stays transparent: an opaque background would paint over the
+    // wrapper and no theme could ever show through it.
+    const cardBg = config.transparent_card || config.use_ha_card
+      ? 'transparent'
+      : (config.card_background || 'var(--ha-card-background, var(--card-background-color, #222))');
+
     // Parse gauge background - support both solid colors and gradients (SVG needs conversion)
-    let gaugeBg = config.transparent_gauge ? 'transparent' : (config.gauge_background || '#333');
+    let gaugeBg = config.transparent_gauge ? 'transparent' : (config.gauge_background || 'var(--secondary-background-color, #333)');
     let gaugeBgSvg = '';
     let gaugeStrokeRef = '';
     
@@ -75,14 +118,27 @@ class HalfGaugeCard extends HTMLElement {
     
     const styles = `
       :host {
-        --text-color: ${config.text_color || '#fff'};
-        --unit-color: ${config.unit_color || '#ddd'};
-        --title-color: ${config.title_color || '#fff'};
+        --text-color: ${config.text_color || 'var(--primary-text-color, #fff)'};
+        --unit-color: ${config.unit_color || 'var(--secondary-text-color, #ddd)'};
+        --title-color: ${config.title_color || 'var(--primary-text-color, #fff)'};
+        --led-off-color: var(--disabled-text-color, #333);
       }
-      
+
+      /* The SVG takes its colors from CSS rather than from fill= / stroke= attributes:
+         var() is not allowed in a presentation attribute, so a themed default set that
+         way would simply be dropped by the browser. */
+      .gauge-bg {
+        fill: none;
+        stroke: ${gaugeStrokeRef};
+      }
+
+      .led {
+        fill: var(--led-off-color);
+      }
+
       .card {
         background: ${cardBg};
-        border-radius: 16px;
+        border-radius: var(--ha-card-border-radius, 16px);
         padding: 20px 20px 15px 20px;
         display: flex;
         flex-direction: column;
@@ -167,7 +223,7 @@ class HalfGaugeCard extends HTMLElement {
       const angle = Math.PI + (i / (ledsCount - 1)) * Math.PI; // 180° to 360° (bottom to bottom through top)
       const x = centerX + radius * Math.cos(angle);
       const y = centerY + radius * Math.sin(angle);
-      return `<circle id="led-${i}" cx="${x}" cy="${y}" r="${ledSize/2}" fill="#333" />`;
+      return `<circle id="led-${i}" class="led" cx="${x}" cy="${y}" r="${ledSize/2}" />`;
     }).join('');
 
     // Value display HTML
@@ -203,10 +259,9 @@ class HalfGaugeCard extends HTMLElement {
               </filter>
             </defs>
             <!-- Background arc -->
-            <path d="M ${ledSize + 5},${halfSize} A ${radius},${radius} 0 0,1 ${gaugeSize - ledSize - 5},${halfSize}" 
-                  fill="none" 
-                  stroke="${gaugeStrokeRef}" 
-                  stroke-width="${ledSize + 4}" 
+            <path class="gauge-bg"
+                  d="M ${ledSize + 5},${halfSize} A ${radius},${radius} 0 0,1 ${gaugeSize - ledSize - 5},${halfSize}"
+                  stroke-width="${ledSize + 4}"
                   stroke-linecap="round"/>
             <!-- Center shadow (filled half-circle) -->
             <path id="center-shadow" 
@@ -372,17 +427,25 @@ class HalfGaugeCard extends HTMLElement {
   }
 
   getLedColor(value, min, max) {
-    const percentage = ((value - min) / (max - min)) * 100;
+    const range = max - min;
     const severity = this.config.severity || [
-      { color: '#4caf50', value: 33 },
-      { color: '#ffeb3b', value: 66 },
-      { color: '#f44336', value: 100 }
+      { color: '#4caf50', value: min },
+      { color: '#ffeb3b', value: min + range * 0.33 },
+      { color: '#f44336', value: min + range * 0.66 }
     ];
 
-    for (const level of severity) {
-      if (percentage <= level.value) return level.color;
+    // A threshold is a LOWER bound: its color applies from its value up to the next
+    // threshold, in the entity's own units — same convention as the native HA gauge
+    // (`segments: [{ from: ... }]`). Sort a copy descending so the highest reached
+    // threshold wins whatever order the entries were typed in.
+    const sorted = [...severity].sort((a, b) => b.value - a.value);
+
+    for (const level of sorted) {
+      if (value >= level.value) return level.color;
     }
-    return '#555';
+
+    // Below the lowest threshold: keep its color rather than leaving a grey hole.
+    return sorted[sorted.length - 1]?.color || '#555';
   }
 
   updateGauge(value) {
@@ -423,13 +486,17 @@ class HalfGaugeCard extends HTMLElement {
       if (!led) continue;
 
       if (i < activeLeds) {
-        led.setAttribute('fill', color);
+        // Inline style, not a `fill` attribute: the attribute loses to the `.led` CSS rule
+        led.style.fill = color;
+        // Restore the opacity, which `hide_inactive_leds` may have zeroed when the gauge
+        // was lower — without this the hidden LEDs never come back as the value rises
+        led.setAttribute('opacity', '1');
         led.setAttribute('filter', `drop-shadow(0 0 4px ${color})`);
       } else {
         if (config.hide_inactive_leds) {
           led.setAttribute('opacity', '0');
         } else {
-          led.setAttribute('fill', '#333');
+          led.style.fill = '';  // back to the themed --led-off-color
           led.setAttribute('opacity', '1');
           led.removeAttribute('filter');
         }
@@ -467,7 +534,14 @@ class HalfGaugeCard extends HTMLElement {
   }
 
   set hass(hass) {
+    // Themes travel on the hass object: re-apply when it changes, or when the card was
+    // pointed at another theme. Cheap enough, and it catches a theme edited live.
+    const themesChanged = !this._hass || this._hass.themes !== hass.themes;
     this._hass = hass;
+    if (themesChanged || this._appliedTheme !== this.config.theme) {
+      this.applyTheme();
+    }
+
     const entity = hass.states[this.config.entity];
     if (!entity) return;
 
@@ -584,6 +658,7 @@ class HalfGaugeCardEditor extends HTMLElement {
           { name: 'transparent_gauge', selector: { boolean: {} } },
           { name: 'hide_inactive_leds', selector: { boolean: {} } },
           { name: 'use_ha_card', selector: { boolean: {} } },
+          { name: 'theme', selector: { theme: {} } },
         ]
       },
       {
@@ -627,6 +702,7 @@ class HalfGaugeCardEditor extends HTMLElement {
       transparent_gauge: 'Transparent gauge',
       hide_inactive_leds: 'Hide inactive LEDs',
       use_ha_card: 'Use ha-card wrapper',
+      theme: 'Theme (empty = dashboard theme)',
       smooth_transitions: 'Smooth transitions',
       animation_duration: 'Animation duration (ms)',
     };
@@ -677,8 +753,8 @@ class HalfGaugeCardEditor extends HTMLElement {
     severityPanel.appendChild(this._severityContent);
     this.appendChild(severityPanel);
 
-    this._renderColorsSection();
-    this._renderSeveritySection();
+    this._renderColorsSection(true);
+    this._renderSeveritySection(true);
   }
 
   _updateForm() {
@@ -694,9 +770,33 @@ class HalfGaugeCardEditor extends HTMLElement {
     return /^#[0-9a-fA-F]{3,8}$/.test((val || '').trim());
   }
 
-  _renderColorsSection() {
+  /**
+   * Deepest focused element, walking down the shadow roots — the editor is mounted inside
+   * the Home Assistant dialog, so `document.activeElement` only reports the outer host.
+   */
+  _deepActiveElement() {
+    let active = document.activeElement;
+    while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+      active = active.shadowRoot.activeElement;
+    }
+    return active;
+  }
+
+  /**
+   * True while the focus sits inside `section`. The browser colour picker is a modal
+   * anchored to its `<input type="color">` and keeps that input focused: rebuilding the
+   * section underneath destroys the anchor, which closes the picker the moment the user
+   * clicks a colour. Same story for a text field being typed into.
+   */
+  _isEditing(section) {
+    const active = this._deepActiveElement();
+    return !!active && section.contains(active);
+  }
+
+  _renderColorsSection(force = false) {
     if (!this._colorsContent) return;
     const c = this._colorsContent;
+    if (!force && this._isEditing(c)) return;
     c.innerHTML = '';
 
     const IS = 'background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,0.15));border-radius:4px;padding:5px 8px;font-size:13px;box-sizing:border-box;';
@@ -719,7 +819,9 @@ class HalfGaugeCardEditor extends HTMLElement {
       sw.value = this._isHexColor(cv) ? cv : '#000000';
       const txt = document.createElement('input');
       txt.style.cssText = IS + 'flex:1;'; txt.value = cv; txt.placeholder = ph;
-      sw.addEventListener('input', (e) => { txt.value = e.target.value; this._setColorConfig(key, e.target.value); });
+      // `change`, not `input`: the picker streams a colour on every cursor move, and each
+      // one would rebuild the card preview for nothing. `change` fires once, on validation.
+      sw.addEventListener('change', (e) => { txt.value = e.target.value; this._setColorConfig(key, e.target.value); });
       txt.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; this._setColorConfig(key, e.target.value); });
       row.appendChild(lbl); row.appendChild(sw); row.appendChild(txt);
       c.appendChild(row);
@@ -839,7 +941,7 @@ class HalfGaugeCardEditor extends HTMLElement {
           pos.type = 'number'; pos.min = 0; pos.max = 100;
           pos.style.cssText = IS + 'width:54px;';
           pos.value = stop.position ?? ''; pos.placeholder = '%';
-          sw.addEventListener('input', (e) => { ct.value = e.target.value; stops[i].color = e.target.value; onUpdate(); });
+          sw.addEventListener('change', (e) => { ct.value = e.target.value; stops[i].color = e.target.value; onUpdate(); });
           ct.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; stops[i].color = e.target.value; onUpdate(); });
           pos.addEventListener('change', (e) => { stops[i].position = e.target.value === '' ? null : parseInt(e.target.value); onUpdate(); });
           row.appendChild(sw); row.appendChild(ct); row.appendChild(pos);
@@ -875,7 +977,7 @@ class HalfGaugeCardEditor extends HTMLElement {
         sw.value = this._isHexColor(cv) ? cv : '#222222';
         const txt = document.createElement('input');
         txt.style.cssText = IS + 'flex:1;'; txt.value = cv; txt.placeholder = '#222222';
-        sw.addEventListener('input', (e) => { txt.value = e.target.value; save(e.target.value); });
+        sw.addEventListener('change', (e) => { txt.value = e.target.value; save(e.target.value); });
         txt.addEventListener('change', (e) => { if (this._isHexColor(e.target.value)) sw.value = e.target.value; save(e.target.value); });
         row.appendChild(sw); row.appendChild(txt); content.appendChild(row);
 
@@ -957,13 +1059,19 @@ class HalfGaugeCardEditor extends HTMLElement {
     return wrapper;
   }
 
-  _renderSeveritySection() {
+  _renderSeveritySection(force = false) {
     if (!this._severityContent) return;
     const c = this._severityContent;
+    if (!force && this._isEditing(c)) return;
     c.innerHTML = '';
 
     const SEV_IS = 'background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,0.15));border-radius:4px;padding:6px 8px;font-size:14px;box-sizing:border-box;';
     const SEV_SW = 'width:34px;height:34px;border:none;border-radius:6px;padding:2px;cursor:pointer;background:none;flex-shrink:0;';
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'color:var(--secondary-text-color);font-size:13px;margin-bottom:12px;';
+    hint.textContent = 'Each color applies from its value upwards, until the next threshold — same as the built-in gauge segments.';
+    c.appendChild(hint);
 
     const severity = this._config.severity || [];
     severity.forEach((item, index) => {
@@ -989,7 +1097,7 @@ class HalfGaugeCardEditor extends HTMLElement {
       colorInput.value = item.color;
       colorInput.placeholder = '#4caf50';
 
-      colorSwatch.addEventListener('input', (e) => {
+      colorSwatch.addEventListener('change', (e) => {
         colorInput.value = e.target.value;
         this._updateSeverity(index, 'color', e.target.value);
       });
@@ -1042,13 +1150,19 @@ class HalfGaugeCardEditor extends HTMLElement {
 
   _addSeverity() {
     const severity = [...(this._config.severity || [])];
+    const max = this._config.max !== undefined ? this._config.max : 100;
+    const min = this._config.min !== undefined ? this._config.min : 0;
     severity.push({
       color: '#4caf50',
-      value: severity.length > 0 ? Math.min(100, severity[severity.length - 1].value + 33) : 33,
+      // The first threshold opens at the gauge minimum so the low end is covered explicitly.
+      value: severity.length > 0
+        ? Math.min(max, severity[severity.length - 1].value + Math.round((max - min) / 3))
+        : min,
     });
     this._config = { ...this._config, severity };
     this._dispatchConfigChanged();
-    this._renderSeveritySection();
+    // Forced: the focus sits on the Add button, inside the section being rebuilt.
+    this._renderSeveritySection(true);
   }
 
   _removeSeverity(index) {
@@ -1061,7 +1175,8 @@ class HalfGaugeCardEditor extends HTMLElement {
       this._config = rest;
     }
     this._dispatchConfigChanged();
-    this._renderSeveritySection();
+    // Forced: the focus sits on the delete button, inside the section being rebuilt.
+    this._renderSeveritySection(true);
   }
 }
 
@@ -1080,7 +1195,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c HALF-GAUGE-CARD %c v1.0.1 ',
+  '%c HALF-GAUGE-CARD %c v2.0.0 ',
   'color: white; font-weight: bold; background: #ff9800;',
   'color: white; font-weight: bold; background: #333;'
 );

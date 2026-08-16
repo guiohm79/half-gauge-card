@@ -106,11 +106,13 @@ A live preview bar updates in real time as you make changes.
 | `leds_count` | number | 50 | Number of LEDs |
 | `led_size` | number | 10 | LED size (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
-| `card_background` | string | `#222` | Card background — hex color, `transparent`, or CSS gradient |
-| `gauge_background` | string | `#333` | Gauge background — hex color, `transparent`, or CSS gradient |
-| `text_color` | string | `#fff` | Value color |
-| `unit_color` | string | `#ddd` | Unit color |
-| `title_color` | string | `#fff` | Title color |
+| `card_background` | string | theme | Card background — hex color, `transparent`, or CSS gradient |
+| `gauge_background` | string | theme | Gauge background — hex color, `transparent`, or CSS gradient |
+| `text_color` | string | theme | Value color |
+| `unit_color` | string | theme | Unit color |
+| `title_color` | string | theme | Title color |
+
+Left unset, these follow the active Home Assistant theme (`--card-background-color`, `--secondary-background-color`, `--primary-text-color`, `--secondary-text-color`). Setting one pins it to your value and the theme no longer affects it.
 
 ### Value Position
 
@@ -139,6 +141,16 @@ A live preview bar updates in real time as you make changes.
 | `transparent_card` | boolean | false | Transparent card background |
 | `transparent_gauge` | boolean | false | Transparent gauge background |
 | `use_ha_card` | boolean | false | Wrap card in `<ha-card>` element (adds HA card styling) |
+| `theme` | string | | Use a specific theme for this card instead of the dashboard's |
+
+With `use_ha_card: true` the card's own background is left transparent so the `<ha-card>` themed background shows through; `card_background` is ignored in that mode.
+
+```yaml
+type: custom:half-gauge-card
+entity: sensor.humidity
+use_ha_card: true
+theme: solarized
+```
 
 ### Animation
 
@@ -149,21 +161,44 @@ A live preview bar updates in real time as you make changes.
 
 ### Color Thresholds (severity)
 
-Severity thresholds define the gauge color based on the current value. Each entry sets the color for values **above** the specified threshold. Entries should be ordered from lowest to highest value.
+Severity thresholds define the gauge color based on the current value. Each entry is a **lower bound**: its color applies **from** its value upwards, until the next threshold. Values are expressed in the entity's own units (not percentages), exactly like the `segments` option of the built-in Home Assistant gauge.
+
+Entry order does not matter — the card sorts the thresholds itself. A value below the lowest threshold keeps that lowest color.
 
 ```yaml
 type: custom:half-gauge-card
 entity: sensor.humidity
 severity:
-  - color: '#00bfff'  # Blue — below 40
+  - color: '#00bfff'  # Blue — from 0 to 40
     value: 0
-  - color: '#4caf50'  # Green — 40 to 70
+  - color: '#4caf50'  # Green — from 40 to 70
     value: 40
-  - color: '#ff9800'  # Orange — 70 to 90
+  - color: '#ff9800'  # Orange — from 70 to 90
     value: 70
-  - color: '#f44336'  # Red — above 90
+  - color: '#f44336'  # Red — from 90 up
     value: 90
 ```
+
+> [!IMPORTANT]
+> **Breaking change in v2.0.0.** Up to v1.0.2 a threshold was an *upper* bound (its color applied to everything *below* its value), and any value above the last threshold turned grey. v2.0.0 switches to the Home Assistant convention described above.
+>
+> To migrate an existing config, shift each color one entry down the list — keep the values, move the colors. For example:
+>
+> ```yaml
+> # v1.0.2 — red up to 9, yellow up to 19, green up to 100
+> severity:
+>   - { color: '#f44336', value: 9 }
+>   - { color: '#ffeb3b', value: 19 }
+>   - { color: '#4caf50', value: 100 }
+>
+> # v2.0.0 — same result
+> severity:
+>   - { color: '#f44336', value: 0 }
+>   - { color: '#ffeb3b', value: 9 }
+>   - { color: '#4caf50', value: 19 }
+> ```
+>
+> If your thresholds were expressed as percentages while `min`/`max` were not `0`/`100`, convert them to the entity's units as well: `value = min + percentage / 100 * (max - min)`.
 
 ### Reading an entity attribute
 
