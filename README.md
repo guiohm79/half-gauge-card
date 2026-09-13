@@ -109,6 +109,7 @@ A live preview bar updates in real time as you make changes.
 | `led_length` | number | | Radial length of rectangular segments (px). Empty = `led_size` × 2 |
 | `led_corner_radius` | number | 1 | Corner radius of rectangular segments (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
+| `severity_mode` | string | `steps` | `steps` = one flat color per threshold, `gradient` = whole bar blended by value, `gradient_arc` = each LED colored by its own position |
 | `card_background` | string | theme | Card background — hex color, `transparent`, or CSS gradient |
 | `gauge_background` | string | theme | Gauge background — hex color, `transparent`, or CSS gradient |
 | `text_color` | string | theme | Value color |
@@ -218,6 +219,28 @@ max: 100
 ```
 
 ## Examples
+
+### Color Gradient Between Thresholds
+
+```yaml
+type: custom:half-gauge-card
+entity: sensor.cpu
+name: CPU
+unit: "%"
+severity_mode: gradient_arc   # or: gradient / steps
+severity:
+  - color: "#00c853"
+    value: 0
+  - color: "#ffeb3b"
+    value: 50
+  - color: "#f44336"
+    value: 80
+```
+
+`gradient` blends the single bar color between the two thresholds surrounding the current
+value; `gradient_arc` colors each LED after its own position, so the lit part of the bar
+shows the full gradient. Thresholds using a theme variable (`var(--...)`) cannot be
+blended and fall back to `steps`.
 
 ### VU Meter Style (rectangular segments)
 

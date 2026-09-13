@@ -1,6 +1,6 @@
 /**
  * Half Gauge Card - A simplified 180° gauge card for Home Assistant
- * Version: 2.1.0
+ * Version: 2.2.0
  */
 
 class HalfGaugeCard extends HTMLElement {
@@ -27,6 +27,7 @@ class HalfGaugeCard extends HTMLElement {
       animation_duration: 800,
       smooth_transitions: true,
       hide_inactive_leds: false,
+      severity_mode: 'steps',  // 'steps', 'gradient' (whole bar) or 'gradient_arc' (per LED)
       enable_shadow: false,
       center_shadow: false,
       center_shadow_blur: 35,
@@ -446,19 +447,95 @@ class HalfGaugeCard extends HTMLElement {
     return { id, svg: '' };
   }
 
-  getLedColor(value, min, max) {
+  /**
+   * Thresholds in use, ascending. Falls back to the green/yellow/red default when the
+   * card has no `severity` of its own.
+   */
+  severityLevels(min, max) {
     const range = max - min;
     const severity = this.config.severity || [
       { color: '#4caf50', value: min },
       { color: '#ffeb3b', value: min + range * 0.33 },
       { color: '#f44336', value: min + range * 0.66 }
     ];
+    return [...severity].sort((a, b) => a.value - b.value);
+  }
+
+  /**
+   * Resolve a CSS color to [r, g, b], or null when it cannot be resolved without a
+   * layout — `var(--x)` most notably, which is why gradient mode falls back to steps
+   * for theme-variable colors instead of guessing.
+   */
+  parseColorToRgb(color) {
+    if (!color) return null;
+    const key = String(color).trim();
+    this._rgbCache = this._rgbCache || {};
+    if (key in this._rgbCache) return this._rgbCache[key];
+
+    let rgb = null;
+    let normalised = key;
+    if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(key)) {
+      // Named colors, rgb() and hsl() are normalised by the canvas; it silently keeps
+      // its previous value for anything it cannot parse, hence the sentinel below.
+      try {
+        const ctx = (this._colorCtx = this._colorCtx || document.createElement('canvas').getContext('2d'));
+        ctx.fillStyle = '#010203';
+        ctx.fillStyle = key;
+        normalised = ctx.fillStyle === '#010203' && key.toLowerCase() !== '#010203' ? null : ctx.fillStyle;
+      } catch (e) {
+        normalised = null;
+      }
+    }
+
+    if (normalised && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(normalised)) {
+      rgb = this.hexToRgb(normalised).split(',').map((n) => parseInt(n, 10));
+    } else if (normalised) {
+      const m = normalised.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+      if (m) rgb = [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    }
+
+    this._rgbCache[key] = rgb;
+    return rgb;
+  }
+
+  /**
+   * Color interpolated between the two thresholds surrounding `value`. Returns null when
+   * either end cannot be parsed, so the caller can fall back to the stepped color.
+   */
+  getGradientColor(value, min, max) {
+    const levels = this.severityLevels(min, max);
+    if (levels.length === 0) return null;
+    if (levels.length === 1 || value <= levels[0].value) return levels[0].color;
+    if (value >= levels[levels.length - 1].value) return levels[levels.length - 1].color;
+
+    let i = 0;
+    while (i < levels.length - 2 && value >= levels[i + 1].value) i++;
+    const low = levels[i];
+    const high = levels[i + 1];
+
+    const span = high.value - low.value;
+    const t = span > 0 ? (value - low.value) / span : 0;
+
+    const a = this.parseColorToRgb(low.color);
+    const b = this.parseColorToRgb(high.color);
+    if (!a || !b) return null;
+
+    const mix = a.map((c, k) => Math.round(c + (b[k] - c) * t));
+    return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+  }
+
+  getLedColor(value, min, max, mode = this.config.severity_mode) {
+    if (mode === 'gradient' || mode === 'gradient_arc') {
+      const blended = this.getGradientColor(value, min, max);
+      if (blended) return blended;
+      // Unparseable color (a theme variable, say): fall through to the stepped color.
+    }
 
     // A threshold is a LOWER bound: its color applies from its value up to the next
     // threshold, in the entity's own units — same convention as the native HA gauge
-    // (`segments: [{ from: ... }]`). Sort a copy descending so the highest reached
+    // (`segments: [{ from: ... }]`). Walk a descending copy so the highest reached
     // threshold wins whatever order the entries were typed in.
-    const sorted = [...severity].sort((a, b) => b.value - a.value);
+    const sorted = this.severityLevels(min, max).reverse();
 
     for (const level of sorted) {
       if (value >= level.value) return level.color;
@@ -476,7 +553,9 @@ class HalfGaugeCard extends HTMLElement {
     
     const percentage = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
     const activeLeds = Math.round((percentage / 100) * ledsCount);
+    // Shadows and, outside `gradient_arc`, every lit LED share the color of the value.
     const color = this.getLedColor(value, min, max);
+    const arcGradient = config.severity_mode === 'gradient_arc';
 
     // Update card shadow
     if (config.enable_shadow) {
@@ -506,12 +585,17 @@ class HalfGaugeCard extends HTMLElement {
       if (!led) continue;
 
       if (i < activeLeds) {
+        // In `gradient_arc` each LED is colored after its own position on the scale, so
+        // the lit part of the bar shows the whole gradient instead of one flat color.
+        const ledColor = arcGradient
+          ? this.getLedColor(min + ((i + 0.5) / ledsCount) * (max - min), min, max, 'gradient')
+          : color;
         // Inline style, not a `fill` attribute: the attribute loses to the `.led` CSS rule
-        led.style.fill = color;
+        led.style.fill = ledColor;
         // Restore the opacity, which `hide_inactive_leds` may have zeroed when the gauge
         // was lower — without this the hidden LEDs never come back as the value rises
         led.setAttribute('opacity', '1');
-        led.setAttribute('filter', `drop-shadow(0 0 4px ${color})`);
+        led.setAttribute('filter', `drop-shadow(0 0 4px ${ledColor})`);
       } else {
         if (config.hide_inactive_leds) {
           led.setAttribute('opacity', '0');
@@ -756,6 +840,7 @@ class HalfGaugeCardEditor extends HTMLElement {
       const preserved = {};
       COLOR_KEYS.forEach(k => { if (this._config[k]) preserved[k] = this._config[k]; });
       if (this._config.severity?.length) preserved.severity = this._config.severity;
+      if (this._config.severity_mode) preserved.severity_mode = this._config.severity_mode;
       this._config = { ...formData, ...preserved };
       if (entityChanged) form.schema = this._getSchema();
       this._dispatchConfigChanged();
@@ -1097,9 +1182,41 @@ class HalfGaugeCardEditor extends HTMLElement {
     const SEV_IS = 'background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,0.15));border-radius:4px;padding:6px 8px;font-size:14px;box-sizing:border-box;';
     const SEV_SW = 'width:34px;height:34px;border:none;border-radius:6px;padding:2px;cursor:pointer;background:none;flex-shrink:0;';
 
+    const modeRow = document.createElement('div');
+    modeRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+    const modeLabel = document.createElement('span');
+    modeLabel.style.cssText = 'font-size:14px;color:var(--primary-text-color);';
+    modeLabel.textContent = 'Color mode';
+    const modeSelect = document.createElement('select');
+    modeSelect.style.cssText = SEV_IS + 'flex:1;';
+    [
+      ['steps', 'Steps (one color per threshold)'],
+      ['gradient', 'Gradient — whole bar blended by value'],
+      ['gradient_arc', 'Gradient — blended along the bar'],
+    ].forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      modeSelect.appendChild(opt);
+    });
+    modeSelect.value = this._config.severity_mode || 'steps';
+    modeSelect.addEventListener('change', (e) => {
+      this._config = { ...this._config, severity_mode: e.target.value };
+      this._dispatchConfigChanged();
+      this._renderSeveritySection(true);
+    });
+    modeRow.appendChild(modeLabel);
+    modeRow.appendChild(modeSelect);
+    c.appendChild(modeRow);
+
+    const MODE_HINTS = {
+      steps: 'Each color applies from its value upwards, until the next threshold — same as the built-in gauge segments.',
+      gradient: 'The whole bar takes a single color, interpolated between the two thresholds surrounding the current value.',
+      gradient_arc: 'Each LED takes the color of its own position, so the lit part of the bar shows the full gradient.',
+    };
     const hint = document.createElement('div');
     hint.style.cssText = 'color:var(--secondary-text-color);font-size:13px;margin-bottom:12px;';
-    hint.textContent = 'Each color applies from its value upwards, until the next threshold — same as the built-in gauge segments.';
+    hint.textContent = MODE_HINTS[this._config.severity_mode] || MODE_HINTS.steps;
     c.appendChild(hint);
 
     const severity = this._config.severity || [];
@@ -1224,7 +1341,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c HALF-GAUGE-CARD %c v2.1.0 ',
+  '%c HALF-GAUGE-CARD %c v2.2.0 ',
   'color: white; font-weight: bold; background: #ff9800;',
   'color: white; font-weight: bold; background: #333;'
 );
