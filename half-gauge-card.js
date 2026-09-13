@@ -1,6 +1,6 @@
 /**
  * Half Gauge Card - A simplified 180° gauge card for Home Assistant
- * Version: 2.2.0
+ * Version: 2.1.0
  */
 
 class HalfGaugeCard extends HTMLElement {
