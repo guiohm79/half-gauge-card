@@ -104,7 +104,10 @@ A live preview bar updates in real time as you make changes.
 |--------|------|---------|-------------|
 | `gauge_size` | number | 200 | Gauge size (px) |
 | `leds_count` | number | 50 | Number of LEDs |
-| `led_size` | number | 10 | LED size (px) |
+| `led_size` | number | 10 | LED size (px) — diameter for round LEDs, thickness for rectangular segments |
+| `led_shape` | string | `round` | `round` = circular LEDs, `rect` = rectangular segments (hi-fi VU meter style) |
+| `led_length` | number | | Radial length of rectangular segments (px). Empty = `led_size` × 2 |
+| `led_corner_radius` | number | 1 | Corner radius of rectangular segments (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
 | `card_background` | string | theme | Card background — hex color, `transparent`, or CSS gradient |
 | `gauge_background` | string | theme | Gauge background — hex color, `transparent`, or CSS gradient |
@@ -215,6 +218,30 @@ max: 100
 ```
 
 ## Examples
+
+### VU Meter Style (rectangular segments)
+
+```yaml
+type: custom:half-gauge-card
+entity: sensor.pression_eau
+name: Pression eau
+unit: bar
+min: 0
+max: 5
+decimals: 1
+led_shape: rect
+leds_count: 24
+led_size: 8
+led_length: 24
+led_corner_radius: 2
+severity:
+  - color: "#00e676"
+    value: 0
+  - color: "#ffeb3b"
+    value: 2
+  - color: "#f44336"
+    value: 4
+```
 
 ### Basic Example
 

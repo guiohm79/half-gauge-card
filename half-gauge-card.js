@@ -1,6 +1,6 @@
 /**
  * Half Gauge Card - A simplified 180° gauge card for Home Assistant
- * Version: 2.0.0
+ * Version: 2.1.0
  */
 
 class HalfGaugeCard extends HTMLElement {
@@ -19,6 +19,9 @@ class HalfGaugeCard extends HTMLElement {
       max: 100,
       leds_count: 50,
       led_size: 10,
+      led_shape: 'round',      // 'round' (circles) or 'rect' (VU-meter style segments)
+      led_length: null,        // Radial length of rectangular LEDs (px, null = led_size * 2)
+      led_corner_radius: 1,    // Corner rounding of rectangular LEDs (px)
       gauge_size: 200,
       decimals: 0,
       animation_duration: 800,
@@ -92,9 +95,17 @@ class HalfGaugeCard extends HTMLElement {
     const ledSize = config.led_size;
     const halfSize = gaugeSize / 2;
 
+    // LED geometry. Round LEDs are circles of `led_size`; rectangular ones are VU-meter
+    // segments: `led_size` thick along the arc, `led_length` long along the radius.
+    const isRectLed = config.led_shape === 'rect';
+    const ledLength = isRectLed ? (config.led_length || ledSize * 2) : ledSize;
+    // Outer margin so the LEDs stay inside the viewBox. For round LEDs this reduces to the
+    // historical `ledSize + 5`, which keeps existing cards pixel-identical.
+    const ledMargin = ledLength / 2 + ledSize / 2 + 5;
+
     const isValueInside = config.value_position === 'inside';
     const centerShadowSize = config.center_shadow_size || 70; // percentage
-    const centerRadius = (halfSize - ledSize - 5) * (centerShadowSize / 100);
+    const centerRadius = (halfSize - ledMargin) * (centerShadowSize / 100);
     
     // Card background - CSS supports colors and gradients natively. Under the ha-card
     // wrapper the card stays transparent: an opaque background would paint over the
@@ -217,13 +228,22 @@ class HalfGaugeCard extends HTMLElement {
     // Generate LEDs as SVG circles
     const centerX = halfSize;
     const centerY = halfSize;
-    const radius = halfSize - ledSize - 5;
+    const radius = halfSize - ledMargin;
 
     const ledsSVG = Array.from({ length: ledsCount }, (_, i) => {
       const angle = Math.PI + (i / (ledsCount - 1)) * Math.PI; // 180° to 360° (bottom to bottom through top)
       const x = centerX + radius * Math.cos(angle);
       const y = centerY + radius * Math.sin(angle);
-      return `<circle id="led-${i}" class="led" cx="${x}" cy="${y}" r="${ledSize/2}" />`;
+      if (!isRectLed) {
+        return `<circle id="led-${i}" class="led" cx="${x}" cy="${y}" r="${ledSize/2}" />`;
+      }
+      // The segment is drawn axis-aligned around its center, then rotated so its long side
+      // points outwards along the radius — the look of a hi-fi VU meter.
+      const rx = config.led_corner_radius ?? 1;
+      const deg = angle * 180 / Math.PI;
+      return `<rect id="led-${i}" class="led" x="${x - ledLength/2}" y="${y - ledSize/2}" `
+        + `width="${ledLength}" height="${ledSize}" rx="${rx}" ry="${rx}" `
+        + `transform="rotate(${deg} ${x} ${y})" />`;
     }).join('');
 
     // Value display HTML
@@ -260,9 +280,9 @@ class HalfGaugeCard extends HTMLElement {
             </defs>
             <!-- Background arc -->
             <path class="gauge-bg"
-                  d="M ${ledSize + 5},${halfSize} A ${radius},${radius} 0 0,1 ${gaugeSize - ledSize - 5},${halfSize}"
-                  stroke-width="${ledSize + 4}"
-                  stroke-linecap="round"/>
+                  d="M ${centerX - radius},${halfSize} A ${radius},${radius} 0 0,1 ${centerX + radius},${halfSize}"
+                  stroke-width="${ledLength + 4}"
+                  stroke-linecap="${isRectLed ? 'butt' : 'round'}"/>
             <!-- Center shadow (filled half-circle) -->
             <path id="center-shadow" 
                   d="M ${centerX - centerRadius},${halfSize} A ${centerRadius},${centerRadius} 0 0,1 ${centerX + centerRadius},${halfSize} Z" 
@@ -631,6 +651,12 @@ class HalfGaugeCardEditor extends HTMLElement {
           { name: 'gauge_size', selector: { number: { min: 100, max: 400, step: 10, mode: 'slider' } } },
           { name: 'leds_count', selector: { number: { min: 10, max: 200, step: 5, mode: 'slider' } } },
           { name: 'led_size', selector: { number: { min: 4, max: 20, mode: 'slider' } } },
+          { name: 'led_shape', selector: { select: { options: [
+            { value: 'round', label: 'Round (LED)' },
+            { value: 'rect', label: 'Rectangle (VU meter)' }
+          ] } } },
+          { name: 'led_length', selector: { number: { min: 4, max: 60, mode: 'slider' } } },
+          { name: 'led_corner_radius', selector: { number: { min: 0, max: 10, mode: 'slider' } } },
           { name: 'value_position', selector: { select: { options: [
             { value: 'below', label: 'Below' },
             { value: 'inside', label: 'Inside' }
@@ -683,6 +709,9 @@ class HalfGaugeCardEditor extends HTMLElement {
       gauge_size: 'Gauge size (px)',
       leds_count: 'Number of LEDs',
       led_size: 'LED size (px)',
+      led_shape: 'LED shape',
+      led_length: 'Segment length (px) — rectangle only, empty = auto',
+      led_corner_radius: 'Segment corner radius (px) — rectangle only',
       value_position: 'Value position',
       value_font_size: 'Font size (px) — empty = auto',
       value_offset_y: 'Vertical offset (px)',
@@ -1195,7 +1224,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c HALF-GAUGE-CARD %c v2.0.0 ',
+  '%c HALF-GAUGE-CARD %c v2.1.0 ',
   'color: white; font-weight: bold; background: #ff9800;',
   'color: white; font-weight: bold; background: #333;'
 );
