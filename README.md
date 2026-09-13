@@ -21,6 +21,8 @@ A simple and elegant Home Assistant card displaying a half-circle gauge (180°).
 ## Features
 
 - Half-circle gauge (180°) with customizable LEDs
+- **Two LED shapes** — round LEDs or rectangular segments (hi-fi VU meter style)
+- **Color gradients** — blend the severity colors smoothly instead of stepping between thresholds
 - **Full visual editor** — all options configurable via GUI, no YAML required
 - **Entity attribute support** — display any attribute value instead of the entity state
 - Smooth animations and transitions
@@ -66,12 +68,12 @@ The card includes a full GUI editor accessible from the Lovelace card editor. Al
 |---------|----------|
 | **Basic** | Entity picker, attribute selector, name, unit |
 | **Range & Decimals** | Min, max, decimal places |
-| **Appearance** | Gauge size, LED count, LED size, value position, font size, offset |
+| **Appearance** | Gauge size, LED count, LED size, LED shape, segment length and corner radius, value position, font size, offset |
 | **Colors** | Color picker for value/unit/title colors; gradient builder for backgrounds |
 | **Shadows** | LED shadow, background shadow, center shadow and its parameters |
 | **Display** | Transparent card/gauge, hide inactive LEDs, ha-card wrapper |
 | **Animation** | Smooth transitions, animation duration |
-| **Color Thresholds** | Add/remove severity thresholds with color picker and value |
+| **Color Thresholds** | Color mode (steps / gradient), add/remove severity thresholds with color picker and value |
 
 ### Gradient builder
 
@@ -105,11 +107,7 @@ A live preview bar updates in real time as you make changes.
 | `gauge_size` | number | 200 | Gauge size (px) |
 | `leds_count` | number | 50 | Number of LEDs |
 | `led_size` | number | 10 | LED size (px) — diameter for round LEDs, thickness for rectangular segments |
-| `led_shape` | string | `round` | `round` = circular LEDs, `rect` = rectangular segments (hi-fi VU meter style) |
-| `led_length` | number | | Radial length of rectangular segments (px). Empty = `led_size` × 2 |
-| `led_corner_radius` | number | 1 | Corner radius of rectangular segments (px) |
 | `hide_inactive_leds` | boolean | false | Hide inactive LEDs |
-| `severity_mode` | string | `steps` | `steps` = one flat color per threshold, `gradient` = whole bar blended by value, `gradient_arc` = each LED colored by its own position |
 | `card_background` | string | theme | Card background — hex color, `transparent`, or CSS gradient |
 | `gauge_background` | string | theme | Gauge background — hex color, `transparent`, or CSS gradient |
 | `text_color` | string | theme | Value color |
@@ -117,6 +115,18 @@ A live preview bar updates in real time as you make changes.
 | `title_color` | string | theme | Title color |
 
 Left unset, these follow the active Home Assistant theme (`--card-background-color`, `--secondary-background-color`, `--primary-text-color`, `--secondary-text-color`). Setting one pins it to your value and the theme no longer affects it.
+
+### LED Shape
+
+![LED shapes](image9.png)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `led_shape` | string | `round` | `round` = circular LEDs, `rect` = rectangular segments (hi-fi VU meter style) |
+| `led_length` | number | | Radial length of rectangular segments (px). Empty = `led_size` × 2 |
+| `led_corner_radius` | number | 1 | Corner radius of rectangular segments (px). `0` = sharp corners |
+
+With `led_shape: rect`, `led_size` sets the thickness of each segment along the arc and `led_length` its length along the radius. The gap between segments comes from `leds_count`: fewer segments leave more space between them. `led_length` and `led_corner_radius` have no effect on round LEDs.
 
 ### Value Position
 
@@ -168,6 +178,20 @@ theme: solarized
 Severity thresholds define the gauge color based on the current value. Each entry is a **lower bound**: its color applies **from** its value upwards, until the next threshold. Values are expressed in the entity's own units (not percentages), exactly like the `segments` option of the built-in Home Assistant gauge.
 
 Entry order does not matter — the card sorts the thresholds itself. A value below the lowest threshold keeps that lowest color.
+
+#### Color mode
+
+![Color modes](image10.png)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `severity_mode` | string | `steps` | How the threshold colors are applied (see below) |
+
+- `steps` — one flat color per threshold; the color changes abruptly when a threshold is crossed.
+- `gradient` — the whole bar takes a single color, blended between the two thresholds surrounding the current value (e.g. 62 between green at 50 and red at 80 gives orange).
+- `gradient_arc` — each LED takes the color of its own position on the scale, so the lit part of the bar shows the full gradient.
+
+Card and center shadows follow the color of the current value in every mode. Colors can be hex, CSS names, `rgb()` or `hsl()`; a threshold using a theme variable (`var(--...)`) cannot be blended and falls back to `steps`.
 
 ```yaml
 type: custom:half-gauge-card
@@ -236,11 +260,6 @@ severity:
   - color: "#f44336"
     value: 80
 ```
-
-`gradient` blends the single bar color between the two thresholds surrounding the current
-value; `gradient_arc` colors each LED after its own position, so the lit part of the bar
-shows the full gradient. Thresholds using a theme variable (`var(--...)`) cannot be
-blended and fall back to `steps`.
 
 ### VU Meter Style (rectangular segments)
 
@@ -438,6 +457,10 @@ center_shadow_size: 80
 | Center Shadow | Complete Setup |
 |---------------|----------------|
 | ![Center](image5.png) | ![Complete](image6.png) |
+
+| LED Shapes | Color Modes |
+|------------|-------------|
+| ![LED shapes](image9.png) | ![Color modes](image10.png) |
 
 ## License
 
